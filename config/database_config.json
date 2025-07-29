@@ -1,0 +1,14 @@
+{
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "database": "mydb",
+    "username": "postgres",
+    "password": "root",
+    "schema": "gen_ai"
+  },
+  "ollama": {
+    "base_url": "http://localhost:11434",
+    "model": "llama3.2:latest"
+  }
+} 

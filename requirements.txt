@@ -1,0 +1,10 @@
+crewai
+streamlit
+pandas
+sqlalchemy
+ollama
+python-dotenv
+pydantic
+langchain
+langchain-community 
+psycopg2

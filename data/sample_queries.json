@@ -1,0 +1,44 @@
+{
+  "queries": [
+    {
+      "natural_language": "Show me all users",
+      "sql": "SELECT * FROM users;",
+      "description": "Basic select all users query"
+    },
+    {
+      "natural_language": "Find users who registered in the last 30 days",
+      "sql": "SELECT * FROM users WHERE created_at >= CURRENT_DATE - INTERVAL '30 days';",
+      "description": "Filter users by registration date"
+    },
+    {
+      "natural_language": "Count total orders by status",
+      "sql": "SELECT status, COUNT(*) as total_orders FROM orders GROUP BY status;",
+      "description": "Aggregate orders by status"
+    },
+    {
+      "natural_language": "Get user details with their order count",
+      "sql": "SELECT u.id, u.name, u.email, COUNT(o.id) as order_count FROM users u LEFT JOIN orders o ON u.id = o.user_id GROUP BY u.id, u.name, u.email;",
+      "description": "Join users with orders and count"
+    },
+    {
+      "natural_language": "Find products with price greater than 100",
+      "sql": "SELECT * FROM products WHERE price > 100 ORDER BY price DESC;",
+      "description": "Filter products by price threshold"
+    },
+    {
+      "natural_language": "Calculate average order value by month",
+      "sql": "SELECT DATE_TRUNC('month', created_at) as month, AVG(total_amount) as avg_order_value FROM orders GROUP BY DATE_TRUNC('month', created_at) ORDER BY month;",
+      "description": "Time-based aggregation with date functions"
+    },
+    {
+      "natural_language": "Find top 10 customers by total spent",
+      "sql": "SELECT u.name, SUM(o.total_amount) as total_spent FROM users u JOIN orders o ON u.id = o.user_id GROUP BY u.id, u.name ORDER BY total_spent DESC LIMIT 10;",
+      "description": "Top customers by spending with limit"
+    },
+    {
+      "natural_language": "List products that have never been ordered",
+      "sql": "SELECT p.* FROM products p LEFT JOIN order_items oi ON p.id = oi.product_id WHERE oi.product_id IS NULL;",
+      "description": "Find products with no orders using LEFT JOIN"
+    }
+  ]
+} 
