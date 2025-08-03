@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    
+    {
+      "name": "Debug Streamlit App",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "streamlit",
+      "args": [
+        "run",
+        "app.py"  // this will run the currently open file
+      ],
+      "console": "integratedTerminal",  // or "externalTerminal" if you want a separate window
+      "justMyCode": false,
+      "env": {
+        "DEBUG": "1",                   // optional: pass extra environment vars for debugging
+        "LOGLEVEL": "DEBUG"
+      }
+    }
+  ]
+}

@@ -76,12 +76,12 @@ def initialize_session_state():
 
 def main():
     """Main application function."""
-    
+    # st.set_option('server.address', 'localhost')
     # Initialize session state
     initialize_session_state()
     
     # Header
-    st.markdown('<h1 class="main-header">🤖 CrewAI SQL Agent</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">CrewAI SQL Assistant</h1>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Natural Language to SQL Query Generator</p>', unsafe_allow_html=True)
     
     # Sidebar for configuration and status
@@ -196,6 +196,8 @@ def main():
                             # Store in session state
                             st.session_state.generated_sql = result["sql_query"]
                             st.session_state.query_result = result
+                            # df = pd.DataFrame(result["sql_query"])
+                            # st.dataframe(df)
                             
                             # Add to history
                             st.session_state.query_history.append((
@@ -215,25 +217,38 @@ def main():
         
         if 'generated_sql' in st.session_state:
             st.markdown('<div class="query-box">', unsafe_allow_html=True)
-            st.code(st.session_state.generated_sql, language="sql")
+            st.text_area(label="Generated SQL Query", value=st.session_state.generated_sql, height=200, disabled=True, key="readonly_sql_area")
             st.markdown('</div>', unsafe_allow_html=True)
+
+            # Create a DataFrame with the generated SQL query
+            sql_df = pd.DataFrame([{"Generated SQL": st.session_state.generated_sql}])
+
+            # Export to Excel Button
+            excel_bytes = st.session_state.sql_agent.dataframe_to_excel_bytes(sql_df)
+            st.download_button(
+                label="Export SQL query to Excel",
+                data=excel_bytes,
+                file_name="generated_sql.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
             
-            # Execute SQL button
-            if st.button("▶️ Execute SQL", key="execute_sql"):
-                with st.spinner("Executing SQL query..."):
-                    try:
-                        execution_result = st.session_state.sql_agent.execute_sql(st.session_state.generated_sql)
+            # # Execute SQL button
+            # if st.button("▶️ Execute SQL", key="execute_sql"):
+            #     with st.spinner("Executing SQL query..."):
+            #         try:
+            #             execution_result = st.session_state.sql_agent.execute_sql(st.session_state.generated_sql)
                         
-                        if execution_result["success"]:
-                            st.session_state.execution_result = execution_result
-                            st.success(f"✅ Query executed successfully! {execution_result['row_count']} rows returned.")
-                        else:
-                            st.error(f"❌ Query execution failed: {execution_result.get('error', 'Unknown error')}")
+            #             if execution_result["success"]:
+            #                 st.session_state.execution_result = execution_result
+            #                 st.success(f"✅ Query executed successfully! {execution_result['row_count']} rows returned.")
+            #             else:
+            #                 st.error(f"❌ Query execution failed: {execution_result.get('error', 'Unknown error')}")
                             
-                    except Exception as e:
-                        st.error(f"❌ Execution error: {str(e)}")
+            #         except Exception as e:
+            #             st.error(f"❌ Execution error: {str(e)}")
         else:
             st.info("Generate a SQL query to see it here.")
+            
     
     # Results section
     if 'execution_result' in st.session_state and st.session_state.execution_result["success"]:

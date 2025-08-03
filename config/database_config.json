@@ -1,4 +1,9 @@
 {
+  "logging": {
+    "level": "DEBUG",
+    "handlers": ["console", "file"],
+    "filename": "sql_agent_debug.log"
+  },  
   "database": {
     "host": "localhost",
     "port": 5432,
