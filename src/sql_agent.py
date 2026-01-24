@@ -1,23 +1,29 @@
 import json
 import logging
-from typing import Dict, Any, List, Optional, Tuple
-from crewai import Agent, Task, Crew, Process
-from src.database_manager import DatabaseManager
-from src.ollama_llm import OllamaManager, OllamaLLM
 import re
-from io import BytesIO
+import hashlib
 import pandas as pd
+from io import BytesIO
+from typing import List, Dict, Any, Optional
+from crewai import Agent, Task, Crew, Process
+from langchain_community.llms import Ollama
+from crewai.tools import tool
+from langchain_ollama import OllamaLLM
+
+from src.database_manager import DatabaseManager
+from src.ollama_llm import OllamaManager
+from src.vector_store import VectorStore
+from src.utils import get_cached_query, cache_query
 
 logger = logging.getLogger(__name__)
 
 class SQLAgent:
-    """Main SQL Agent class using CrewAI framework."""
-    
     def __init__(self, config_path: str = "config/database_config.json"):
         """Initialize SQL Agent with all components."""
         self.config_path = config_path
         self.db_manager = DatabaseManager(config_path)
         self.ollama_manager = OllamaManager(config_path)
+        self.vector_store = VectorStore()
         self.llm = self.ollama_manager.llm
         self._setup_logging()
         
@@ -88,9 +94,14 @@ class SQLAgent:
     def _create_agents(self) -> Dict[str, Agent]:
         """Create CrewAI agents for different roles."""
 
-        # self.llm = OllamaLLM(model="llama3.2:latest", base_url="http://localhost:11434")
-        self.llm = OllamaLLM(provider="ollama", model="ollama/llama3.2:latest", base_url="http://localhost:11434")
-        print(self.llm)
+        # Use the LLM from OllamaManager which is initialized with config
+        self.llm = self.ollama_manager.llm
+        logger.info(f"Using LLM: {type(self.llm)}")
+        try:
+            logger.info(f"LLM Model Name: {getattr(self.llm, 'model_name', 'Unknown')}")
+        except:
+            pass
+        
         # SQL Analyst Agent
         sql_analyst = Agent(
             role="SQL Analyst",
@@ -127,25 +138,6 @@ class SQLAgent:
             llm=self.llm
         )
         
-        # Query Validator Agent
-        # query_validator = Agent(
-        #     role="Query Validator",
-        #     goal="Validate SQL queries for correctness and optimization",
-        #     backstory="""You are a SQL validation expert who ensures queries are 
-        #     syntactically correct, follow best practices, and are optimized for 
-        #     the specific database schema.""",
-        #     verbose=True,
-        #     allow_delegation=False,
-        #     llm=self.llm
-        # )
-
-        # return {
-        #     "sql_analyst": sql_analyst,
-        #     "db_expert": db_expert,
-        #     "sql_developer": sql_developer,
-        #     "query_validator": query_validator
-        # }
-        
         return {
             "sql_analyst": sql_analyst,
             "db_expert": db_expert,
@@ -153,54 +145,79 @@ class SQLAgent:
         }
     
     def connect_database(self) -> bool:
-        """Connect to the database."""
-        return self.db_manager.connect()
+        """Connect to the database and initialize vector store."""
+        if self.db_manager.connect():
+            try:
+                # Fetch all DDLs and store in vector DB
+                logger.info("Fetching DDLs for Vector Store...")
+                ddls = self.db_manager.get_all_ddls()
+                
+                # Clear existing store to promote fresh state
+                self.vector_store.clear_store()
+                self.vector_store.store_ddls(ddls)
+                return True
+            except Exception as e:
+                logger.error(f"Error initializing Vector Store: {str(e)}")
+                # We still return True if DB connects, even if Vector Store fails
+                return True
+        return False
+
+    def load_configured_schema(self, config_table_name: Optional[str] = None) -> bool:
+        """
+        Load schema based on a configuration table instead of the entire database.
+        
+        Fetches DDLs for tables specified in the config table (defined in database_config.json
+        or overridden via argument).
+        
+        Args:
+            config_table_name: Optional override for the config table name.
+            
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        if not self.db_manager.engine:
+             logger.warning("Database not connected. Attempting to connect...")
+             if not self.db_manager.connect():
+                 logger.error("Failed to connect to database.")
+                 return False
+
+        try:
+            # We pass the argument (even if None) to the manager, which handles the config fallback
+            ddls = self.db_manager.get_configured_ddls(config_table_name=config_table_name)
+            
+            if ddls:
+                # Clear existing store to ensure we only have the configured tables
+                logger.info("Clearing Vector Store for configured schema load...")
+                self.vector_store.clear_store()
+                
+                self.vector_store.store_ddls(ddls)
+                logger.info("Successfully loaded configured schema into Vector Store.")
+                return True
+            else:
+                logger.warning("No DDLs were retrieved from configuration.")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error in load_configured_schema: {str(e)}")
+            return False
     
     def test_ollama_connection(self) -> bool:
         """Test connection to Ollama service."""
         return self.ollama_manager.test_connection()
+
+    def update_model(self, model_name: str, base_url: str):
+        """Update the LLM model and recreate agents."""
+        self.ollama_manager.update_model(model_name, base_url)
+        self.llm = self.ollama_manager.llm
+        self.agents = self._create_agents()
+        logger.info(f"SQLAgent updated to use model: {model_name}")
     
-    def _create_schema_context(self, relevant_tables: List[str]) -> str:
-        """Create schema context for the given tables."""
-        try:
-            schema = self.db_manager.get_database_schema()
-            context_parts = []
-            
-            for table_name in relevant_tables:
-                if table_name in schema["tables"]:
-                    table_info = schema["tables"][table_name]
-                    
-                    # Table header
-                    context_parts.append(f"Table: {table_name}")
-                    
-                    # Columns
-                    columns = []
-                    for col in table_info["columns"]:
-                        nullable = "NULL" if col["nullable"] else "NOT NULL"
-                        default = f" DEFAULT {col['default']}" if col["default"] else ""
-                        columns.append(f"  - {col['name']}: {col['type']} {nullable}{default}")
-                    
-                    context_parts.append("Columns:")
-                    context_parts.extend(columns)
-                    
-                    # Primary keys
-                    if table_info["primary_keys"]:
-                        context_parts.append(f"Primary Keys: {', '.join(table_info['primary_keys'])}")
-                    
-                    # Foreign keys
-                    if table_info["foreign_keys"]:
-                        fk_info = []
-                        for fk in table_info["foreign_keys"]:
-                            fk_info.append(f"{', '.join(fk['constrained_columns'])} -> {fk['referred_table']}.{', '.join(fk['referred_columns'])}")
-                        context_parts.append(f"Foreign Keys: {'; '.join(fk_info)}")
-                    
-                    context_parts.append("")  # Empty line for separation
-            
-            return "\n".join(context_parts)
-            
-        except Exception as e:
-            logger.error(f"Error creating schema context: {str(e)}")
-            return f"Error: Could not retrieve schema information - {str(e)}"
+    def _create_schema_context(self, relevant_ddls: List[str]) -> str:
+        """Create schema context from retrieved DDLs."""
+        if not relevant_ddls:
+            return "No relevant tables found."
+        
+        return "\n\n".join(relevant_ddls)
     
     def _create_examples_context(self) -> str:
         """Create examples context from sample queries."""
@@ -210,21 +227,91 @@ class SQLAgent:
         examples = []
         for i, query_info in enumerate(self.sample_queries[:5], 1):  # Limit to 5 examples
             examples.append(f"Example {i}:")
-            examples.append(f"  Natural Language: {query_info['natural_language']}")
-            examples.append(f"  SQL: {query_info['sql']}")
-            examples.append("")
-        
+            examples.append(f"User: {query_info['natural_language']}")
+            examples.append(f"SQL: {query_info['sql']}")
+            examples.append("---")
+            
         return "\n".join(examples)
-    
-    def generate_sql(self, natural_language_query: str) -> Dict[str, Any]:
-        """Generate SQL query using CrewAI agents."""
+
+        if self.db_manager.engine:
+            self.db_manager.engine.dispose()
+
+    def _check_relevancy(self, query: str) -> bool:
+        """
+        Check if the query is relevant to SQL generation or database operations.
         
+        Args:
+           query: The user's input string.
+           
+        Returns:
+           bool: True if relevant, False otherwise.
+        """
         try:
-            # Get relevant tables
-            relevant_tables = self.db_manager.get_relevant_tables(natural_language_query)
+             # Use the existing LLM instance
+            prompt = f"""You are a strict classifier. Your job is to determine if a user's query is related to SQL, databases, data analysis, or asking for data from a system.
+            
+            Query: {query}
+            
+            Rules:
+            - If it asks for code, data, tables, schema, inserting, updating, deleting, or analyzing numbers/text, answer YES.
+            - If it is a greeting like "hi", "hello", answer NO.
+            - If it asks about general knowledge (e.g. "capital of France", "recipe for cake"), answer NO.
+            - If it is meaningless or random text, answer NO.
+            
+            Answer ONLY with the word YES or NO. Do not add punctuation or explanation.
+            """
+            
+            response = self.llm.invoke(prompt)
+            
+            # Clean response
+            clean_response = str(response).strip().upper()
+            
+            # Check for YES match
+            if "YES" in clean_response:
+                return True
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error checking relevancy: {e}")
+            # If check fails, fail open (allow it) or closed? 
+            # Let's fail open to avoid blocking valid queries on LLM hiccups, 
+            # but log it.
+            return True
+
+    def generate_sql(self, natural_language_query: str) -> Dict[str, Any]:
+        """Generate SQL query from natural language using CrewAI."""
+        try:
+            # 0. Check Relevancy
+            if not self._check_relevancy(natural_language_query):
+                logger.info(f"Query flagged as irrelevant: {natural_language_query}")
+                error_message = """I'm an SQL Assistant designed to help you query your database.
+
+Please ask SQL-related questions like:
+- 'Generate an SQL query to list all customers with high-value transactions in a given month'
+- 'Generate SQL query to retrieve high-activity accounts among newly opened accounts'
+'How can I help you query your database?'"""
+                return {
+                    "success": False,
+                    "error": error_message
+                }
+
+            # 1. Check Cache
+            query_hash = hashlib.sha256(natural_language_query.encode()).hexdigest()
+            cached_sql = get_cached_query(self.db_manager, query_hash)
+            
+            if cached_sql:
+                logger.info("Cache hit! Returning cached SQL.")
+                return {
+                    "success": True,
+                    "sql_query": cached_sql,
+                    "cached": True
+                }
+
+            # Get relevant DDLs using RAG
+            relevant_ddls = self.vector_store.retrieve_relevant_ddls(natural_language_query)
             
             # Create context
-            schema_context = self._create_schema_context(relevant_tables)
+            schema_context = self._create_schema_context(relevant_ddls)
             examples_context = self._create_examples_context()
             
             # Create tasks
@@ -232,13 +319,13 @@ class SQLAgent:
                 description=f"""Analyze the following natural language query and identify:
                 1. The main entities/tables involved
                 2. The type of operation (SELECT, INSERT, UPDATE, DELETE)
-                3. Any filtering conditions
-                4. Any aggregation requirements
+                3. Any filtering conditions (WHERE, HAVING)
+                4. Any aggregation requirements (COUNT, SUM, AVG, etc.)
                 5. Any sorting requirements
                 
                 Query: {natural_language_query}
                 
-                Database Schema Context:
+                Database Schema Context (DDLs):
                 {schema_context}
                 
                 Provide a detailed analysis in JSON format:
@@ -247,70 +334,49 @@ class SQLAgent:
                     "operation": "SELECT/INSERT/UPDATE/DELETE",
                     "filters": ["list of filtering conditions"],
                     "aggregations": ["list of aggregation functions needed"],
-                    "sorting": ["list of sorting requirements"],
-                    "joins": ["list of required table joins"]
+                    "sorting": ["list of sorting requirements"]
                 }}""",
                 agent=self.agents["sql_analyst"],
-                expected_output="JSON analysis of the query requirements"
+                expected_output="JSON analysis of the query requirements",
+                callback=self._log_task_output
             )
             
             schema_task = Task(
                 description=f"""Based on the analysis, provide detailed database context including:
-                1. Table relationships and foreign keys
+                1. Table relationships and foreign keys based on DDLs
                 2. Data types and constraints
-                3. Sample data patterns
-                4. Indexing considerations
+                3. Indexing considerations
                 
-                Schema Context:
+                Schema Context (DDLs):
                 {schema_context}
                 
                 Provide database-specific insights for SQL generation.""",
                 agent=self.agents["db_expert"],
-                expected_output="Database context and insights"
+                expected_output="Database context and insights",
+                callback=self._log_task_output
             )
             
             generation_task = Task(
-                description=f"""Generate a PostgreSQL SQL query based on the analysis and database context.
+                description=f"""Generate a valid PostgreSQL SQL query for the following request.
                 
-                Natural Language Query: {natural_language_query}
+                Query: {natural_language_query}
                 
-                Example Queries for Reference:
-                {examples_context}
+                Schema Context:
+                {schema_context}
                 
-                Instructions:
-                1. Use the analysis to understand requirements
-                2. Apply database context for proper table relationships
-                3. Generate syntactically correct PostgreSQL SQL
-                4. Include proper JOINs, WHERE clauses, and aggregations
-                5. Return ONLY the SQL query, no explanations
-                6. For Insert queries use increment of primary keys
-                
-                Generate the SQL query:""",
+                CRITICAL INSTRUCTIONS:
+                - Output ONLY the raw SQL query.
+                - NO "Thought:", "Final Answer:", or explanations.
+                - NO markdown formatting (no ```sql).
+                - Start the output directly with the SQL verb (SELECT, INSERT, etc.).
+                - Do not include "I now can give a great answer".
+                """,
                 agent=self.agents["sql_developer"],
-                expected_output="Valid PostgreSQL SQL query"
+                expected_output="Raw SQL query string only",
+                callback=self._log_task_output
             )
             
-            # validation_task = Task(
-            #     description="""Validate the generated SQL query for:
-            #     1. Syntax correctness
-            #     2. Proper table and column references
-            #     3. Efficient structure
-            #     4. Best practices adherence
-                
-            #     Provide validation result and any suggestions for improvement.""",
-            #     agent=self.agents["query_validator"],
-            #     expected_output="SQL validation result and suggestions"
-            # )
-            
-            # # Create crew
-            # crew = Crew(
-            #     agents=list(self.agents.values()),
-            #     tasks=[analysis_task, schema_task, generation_task, validation_task],
-            #     process=Process.sequential,
-            #     verbose=True
-            # )
-
-             # Create crew
+            # Create crew
             crew = Crew(
                 agents=list(self.agents.values()),
                 tasks=[analysis_task, schema_task, generation_task],
@@ -322,111 +388,104 @@ class SQLAgent:
             result = crew.kickoff()
             # logging.debug("result from crew ", result)
             sql_str = getattr(result, "raw", None)  # Or replace "output" with actual attribute
-            logging.info("result raw",sql_str)
+            logging.info(f"Final result raw: {sql_str}")
 
             if sql_str is None:
-                logger.error("crew.kickoff() did not return string raw.")
-                return {
-                    "success": False,
-                    "error": "crew.kickoff() raw missing",
-                    "natural_language_query": natural_language_query
-                }
+                # If raw is None, try to use the result directly if it's a string
+                if isinstance(result, str):
+                    sql_str = result
+                else:
+                    logger.error("crew.kickoff() did not return string raw.")
+                    return {
+                        "success": False,
+                        "error": "Failed to generate SQL from agent output"
+                    }
 
             # Extract SQL from result
-            sql_query = self._extract_sql_from_result(sql_str) 
+            sql_query = self._extract_sql_from_result(str(sql_str))
+            
+            if not sql_query:
+                # Fallback: if extraction failed, try to return the raw string if it looks like SQL
+                raw_str = str(sql_str).strip()
+                if re.search(r'(?i)^(SELECT|INSERT|UPDATE|DELETE|WITH)', raw_str):
+                     sql_query = raw_str
+                else:
+                    return {
+                        "success": False,
+                        "error": "Failed to extract valid SQL from agent output"
+                    }
+            
+            # Cache the successful result
+            cache_query(self.db_manager, query_hash, natural_language_query, sql_query)
             
             return {
                 "success": True,
                 "sql_query": sql_query,
-                "natural_language_query": natural_language_query,
-                "relevant_tables": relevant_tables,
-                "crew_result": result,
-                "schema_context": schema_context
+                "cached": False
             }
             
         except Exception as e:
-            logger.error(f"Error in SQL generation: {str(e)}")
+            logger.error(f"Error generating SQL: {str(e)}")
             return {
                 "success": False,
-                "error": str(e),
-                "natural_language_query": natural_language_query
+                "error": str(e)
             }
-        
-    
 
-    def _extract_sql_from_result(self, result: str) -> str:
+    def _log_task_output(self, task_output):
+        """Callback to log task output."""
+        agent_name = "Unknown Agent"
+        if hasattr(task_output, "agent"):
+            agent_name = task_output.agent
+        
+        # Extract the actual output content
+        output_content = task_output
+        if hasattr(task_output, "raw"):
+             output_content = task_output.raw
+             
+        logger.info(f"[{agent_name}] Task Output: {output_content}")
+
+    def _extract_sql_from_result(self, result: str) -> Optional[str]:
         """
         Try to extract the first valid SQL DML query (SELECT/INSERT/UPDATE/DELETE)
         from SQL code blocks or inline text.
         """
         # 1. Try to find SQL queries in markdown code blocks first
-        code_blocks = re.findall(r"``````", result, flags=re.IGNORECASE)
+        code_blocks = re.findall(r"```sql(.*?)```", result, flags=re.DOTALL | re.IGNORECASE)
+        if not code_blocks:
+             code_blocks = re.findall(r"```(.*?)```", result, flags=re.DOTALL | re.IGNORECASE)
+             
         for block in code_blocks:
-            # Find the first non-DDL query in the block
-            matches = re.findall(r'(?im)^(SELECT|INSERT|UPDATE|DELETE)\s+.*?;', block)
-            if matches:
-                # Return the entire statement
-                sql_stmt_match = re.search(r'(?im)(SELECT|INSERT|UPDATE|DELETE)\s+.*?;', block)
-                if sql_stmt_match:
-                    return sql_stmt_match.group(0).strip()
+            clean_block = block.strip()
+            # Basic validation to ensure it looks like SQL
+            if re.search(r'(?i)^(SELECT|INSERT|UPDATE|DELETE|WITH)', clean_block):
+                return clean_block
+            
         # 2. Fallback: try to find inline SQL query in the main text
+        # Look for a pattern that starts with a SQL keyword and ends with a semicolon
+        # We relax the regex to capture multi-line queries more reliably
         match = re.search(
-            r'(?i)(SELECT|INSERT|UPDATE|DELETE)\s+.*?;',
-            result.replace('\n',' '),
+            r'(?i)(SELECT|INSERT|UPDATE|DELETE|WITH)\s+.*?;',
+            result,
+            flags=re.DOTALL
         )
         if match:
             return match.group(0).strip()
-        # 3. If not found, return None or the whole result (for debugging)
-        logger.warning("Could not extract SQL query from result.")
-        return None
-
-
-    # Usage after getting raw result
-    # sql_query = self._extract_sql_from_result(sql_str)
-    # sql_query should yield "SELECT amount FROM orders WHERE amount > 10000;"
-
-    
-    # def _extract_sql_from_result(self, result: str) -> str:
-    #     """Extract SQL query from crew result."""
-    #     # Look for SQL patterns in the result
-    #     lines = result.split('\n')
-    #     sql_lines = []
-    #     in_sql = False
-        
-    #     for line in lines:
-    #         line = line.strip()
-    #         if not line:
-    #             continue
-                
-    #         # Check if line contains SQL keywords
-    #         if any(keyword in line.upper() for keyword in ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'WITH']):
-    #             in_sql = True
             
-    #         if in_sql:
-    #             sql_lines.append(line)
-                
-    #             # Check if line ends with semicolon
-    #             if line.endswith(';'):
-    #                 break
-        
-    #     if sql_lines:
-    #         return ' '.join(sql_lines)
-    #     else:
-    #         # Fallback: return the entire result
-    #         return result.strip()
-
-    def dataframe_to_excel_bytes(self, df: pd.DataFrame) -> BytesIO:
-        """Convert DataFrame to Excel as a BytesIO buffer for download."""
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False)
-        output.seek(0)
-        return output
+        return None
     
     def execute_sql(self, sql_query: str) -> Dict[str, Any]:
         """Execute SQL query and return results."""
         try:
-            df = self.db_manager.execute_query(sql_query)
+            # Clean comments before execution
+            clean_query = re.sub(r'--.*', '', sql_query)
+            # Remove empty lines
+            clean_query = "\n".join([line for line in clean_query.split('\n') if line.strip()])
+            
+            # Only execute the first statement if multiple are present (safety)
+            if ";" in clean_query:
+                clean_query = clean_query.split(";")[0]
+            
+            df = self.db_manager.execute_query(clean_query)
             return {
                 "success": True,
                 "data": df.to_dict('records'),
@@ -442,8 +501,7 @@ class SQLAgent:
     
     def close(self):
         """Close database connection."""
-        self.db_manager.close() 
-        
+        self.db_manager.close()
 
 if __name__ == "__main__":
     sql_agent = SQLAgent()

@@ -1,13 +1,16 @@
 {
   "logging": {
     "level": "DEBUG",
-    "handlers": ["console", "file"],
+    "handlers": [
+      "console",
+      "file"
+    ],
     "filename": "sql_agent_debug.log"
-  },  
+  },
   "database": {
     "host": "localhost",
     "port": 5432,
-    "database": "mydb",
+    "database": "postgres",
     "username": "postgres",
     "password": "root",
     "schema": "gen_ai"
@@ -15,5 +18,13 @@
   "ollama": {
     "base_url": "http://localhost:11434",
     "model": "llama3.2:latest"
+  },
+  "settings": {
+    "temperature": 0.7,
+    "max_tokens": 2048
+  },
+  "config_management": {
+    "table_name": "gen_ai.sql_rag_configurations",
+    "column_name": "table_name"
   }
-} 
+}

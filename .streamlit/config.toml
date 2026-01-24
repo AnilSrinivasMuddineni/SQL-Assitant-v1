@@ -1,0 +1,11 @@
+[server]
+#address = "0.0.0.0"  # Only listens to localhost
+#port = 8501            # You can change the port if needed
+enableCORS = false     # Optional: Disable CORS if you're not allowing cross-origin requests
+fileWatcherType = "poll"  # or "none"
+
+[client]
+toolbarMode = "viewer"   # or "minimal"
+
+[ui]
+hideTopBar = true        # hides the whole top bar

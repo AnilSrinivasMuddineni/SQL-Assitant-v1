@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS order_items (
     total_price DECIMAL(10,2) NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS user_settings (
+    setting_key VARCHAR(255) PRIMARY KEY,
+    setting_value TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 -- Insert sample data
 
 -- Insert users

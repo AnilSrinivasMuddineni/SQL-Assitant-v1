@@ -4,6 +4,8 @@ A powerful SQL query generator that uses CrewAI framework with locally hosted Ol
 
 ## 🚀 Features
 
+- **Query Relevancy Check**: Intelligent filtering of non-SQL related queries to save resources
+- **Config-Driven Schema Loading**: Efficiently load only specific tables via database configuration
 - **Natural Language to SQL**: Convert plain English queries into PostgreSQL SQL statements
 - **CrewAI Integration**: Multi-agent system for intelligent query analysis and generation
 - **Local Model Support**: Uses Ollama with tinyllama:1.1b-chat model
@@ -164,13 +166,26 @@ Edit `config/database_config.json` to match your PostgreSQL setup:
 The same file contains Ollama settings:
 
 ```json
-{
   "ollama": {
     "base_url": "http://localhost:11434",
     "model": "tinyllama:1.1b-chat"
+  },
+  "config_management": {
+    "table_name": "gen_ai.sql_rag_configurations",
+    "column_name": "table_name"
   }
 }
 ```
+
+### Config-Driven Schema Loading
+Instead of indexing the entire database, you can define a list of "main" tables in a configuration table (e.g., `gen_ai.sql_rag_configurations`).
+- If this table exists and is populated, the agent will ONLY index tables listed there.
+- If not, it falls back to indexing ALL tables.
+
+### Query Relevancy Check
+The agent includes a built-in classifier that validates whether a user's query is related to SQL/Data before maximizing resources.
+- **Allowed**: "Show me users", "Count orders", "Generate SQL for..."
+- **Blocked**: "Hi", "Recipe for cake", "What is the capital of France?"
 
 ### Model Parameters
 

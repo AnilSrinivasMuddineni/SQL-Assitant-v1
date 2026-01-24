@@ -7,4 +7,12 @@ python-dotenv
 pydantic
 langchain
 langchain-community 
-psycopg2
+psycopg2-binary
+litellm
+chromadb
+sentence-transformers
+plotly
+crewai-tools
+langchain-ollama
+openpyxl
+requests
