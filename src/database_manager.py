@@ -238,6 +238,161 @@ class DatabaseManager:
         if self.engine:
             self.engine.dispose()
 
+    def get_enhanced_ddl(self, table_name: str, schema_name: Optional[str] = None) -> str:
+        """
+        Retrieve CREATE TABLE statement with PostgreSQL column comments.
+        
+        Queries information_schema and pg_catalog to fetch column descriptions
+        and formats them as inline comments in the DDL.
+        
+        Args:
+            table_name: Name of the table
+            schema_name: Optional schema name (uses config schema if not provided)
+            
+        Returns:
+            Enhanced DDL string with column comments
+        """
+        if not self.engine:
+            raise Exception("Database not connected. Call connect() first.")
+        
+        try:
+            # Get schema from config if not provided
+            if not schema_name:
+                schema_name = self.config['database'].get('schema', 'public')
+            
+            # Query to get column information with comments
+            column_query = text("""
+                SELECT 
+                    c.column_name,
+                    c.data_type,
+                    c.character_maximum_length,
+                    c.is_nullable,
+                    c.column_default,
+                    pgd.description AS column_comment
+                FROM information_schema.columns c
+                LEFT JOIN pg_catalog.pg_statio_all_tables st 
+                    ON c.table_schema = st.schemaname AND c.table_name = st.relname
+                LEFT JOIN pg_catalog.pg_description pgd 
+                    ON pgd.objoid = st.relid AND pgd.objsubid = c.ordinal_position
+                WHERE c.table_schema = :schema_name 
+                  AND c.table_name = :table_name
+                ORDER BY c.ordinal_position;
+            """)
+            
+            with self.engine.connect() as conn:
+                result = conn.execute(column_query, {
+                    "schema_name": schema_name,
+                    "table_name": table_name
+                })
+                columns = result.fetchall()
+            
+            if not columns:
+                # Fallback to regular DDL if no columns found
+                return self._get_regular_ddl(table_name, schema_name)
+            
+            # Build enhanced DDL manually
+            ddl_lines = [f"CREATE TABLE {schema_name}.{table_name} ("]
+            
+            column_definitions = []
+            for col in columns:
+                col_name = col[0]
+                data_type = col[1]
+                max_length = col[2]
+                is_nullable = col[3]
+                default_val = col[4]
+                comment = col[5]
+                
+                # Build column definition
+                if max_length and data_type in ('character varying', 'varchar', 'char'):
+                    col_def = f"    {col_name} {data_type}({max_length})"
+                else:
+                    col_def = f"    {col_name} {data_type}"
+                
+                # Add constraints
+                if is_nullable == 'NO':
+                    col_def += " NOT NULL"
+                
+                if default_val:
+                    col_def += f" DEFAULT {default_val}"
+                
+                # Add comment as inline comment
+                if comment:
+                    col_def += f"  -- {comment}"
+                
+                column_definitions.append(col_def)
+            
+            ddl_lines.append(",\n".join(column_definitions))
+            ddl_lines.append(");")
+            
+            return "\n".join(ddl_lines)
+            
+        except Exception as e:
+            logger.error(f"Error retrieving enhanced DDL for {table_name}: {str(e)}")
+            # Fallback to regular DDL
+            return self._get_regular_ddl(table_name, schema_name)
+    
+    def _get_regular_ddl(self, table_name: str, schema_name: Optional[str] = None) -> str:
+        """
+        Fallback method to get regular DDL without comments.
+        
+        Args:
+            table_name: Name of the table
+            schema_name: Optional schema name
+            
+        Returns:
+            Regular DDL string
+        """
+        try:
+            from sqlalchemy import Table
+            
+            if not schema_name:
+                schema_name = self.config['database'].get('schema', 'public')
+            
+            # Create fresh metadata for this table
+            meta = MetaData()
+            table = Table(table_name, meta, autoload_with=self.engine, schema=schema_name)
+            
+            ddl = str(CreateTable(table).compile(self.engine))
+            return ddl.strip()
+        except Exception as e:
+            logger.error(f"Error in fallback DDL retrieval: {str(e)}")
+            return f"-- Error retrieving DDL for {table_name}"
+    
+    def get_all_enhanced_ddls(self) -> Dict[str, str]:
+        """
+        Retrieve CREATE TABLE statements with comments for all tables in the database.
+        
+        Returns:
+            Dictionary mapping table names to enhanced DDL strings with column comments
+        """
+        if not self.engine:
+            raise Exception("Database not connected. Call connect() first.")
+        
+        ddls = {}
+        try:
+            db_config = self.config['database']
+            target_schema = db_config.get('schema', 'public')
+            
+            # Get list of all tables
+            inspector = inspect(self.engine)
+            if target_schema:
+                table_names = inspector.get_table_names(schema=target_schema)
+            else:
+                table_names = inspector.get_table_names()
+            
+            # Get enhanced DDL for each table
+            for table_name in table_names:
+                full_name = f"{target_schema}.{table_name}" if target_schema else table_name
+                ddls[full_name] = self.get_enhanced_ddl(table_name, target_schema)
+            
+            logger.info(f"Retrieved enhanced DDLs for {len(ddls)} tables")
+            return ddls
+            
+        except Exception as e:
+            logger.error(f"Error retrieving enhanced DDLs: {str(e)}")
+            # Fallback to regular DDLs
+            return self.get_all_ddls()
+
     def get_configured_ddls(self, config_table_name: Optional[str] = None, table_name_column: Optional[str] = None) -> Dict[str, str]:
         """
         Retrieve DDLs ONLY for tables specified in a configuration table.

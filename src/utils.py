@@ -1,7 +1,10 @@
 import json
 import logging
 import time
-from typing import Dict, Any, Optional
+import uuid
+import re
+from typing import Dict, Any, Optional, Tuple
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -61,12 +64,40 @@ def format_time_taken(start_time: float) -> str:
     minutes = elapsed / 60
     return f"{minutes:.2f}m"
 
+def get_schema_prefix(db_manager) -> str:
+    """
+    Get the schema prefix for table names based on configuration.
+    
+    Args:
+        db_manager: DatabaseManager instance
+        
+    Returns:
+        str: Schema prefix (e.g., "gen_ai.") or empty string if not configured.
+    """
+    try:
+        if hasattr(db_manager, 'config'):
+            config = db_manager.config
+            # Try config_management first per user request
+            schema = config.get('config_management', {}).get('schema_name')
+            if not schema:
+                # Fallback to database config
+                schema = config.get('database', {}).get('schema')
+            
+            if schema:
+                return f"{schema}."
+    except Exception:
+        pass
+    return ""
+
 def init_settings_table(db_manager) -> bool:
     """
     Initialize the user_settings table if it doesn't exist.
     """
-    create_table_sql = """
-    CREATE TABLE IF NOT EXISTS user_settings (
+    schema_prefix = get_schema_prefix(db_manager)
+    table_name = f"{schema_prefix}user_settings"
+    
+    create_table_sql = f"""
+    CREATE TABLE IF NOT EXISTS {table_name} (
         setting_key VARCHAR(255) PRIMARY KEY,
         setting_value TEXT,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -84,7 +115,10 @@ def load_settings_from_db(db_manager) -> Dict[str, Any]:
     Load settings from the database.
     """
     try:
-        query = "SELECT setting_key, setting_value FROM user_settings;"
+        schema_prefix = get_schema_prefix(db_manager)
+        table_name = f"{schema_prefix}user_settings"
+        
+        query = f"SELECT setting_key, setting_value FROM {table_name};"
         df = db_manager.execute_query(query)
         settings = {}
         for _, row in df.iterrows():
@@ -106,6 +140,9 @@ def save_settings_to_db(db_manager, settings: Dict[str, Any]) -> bool:
         # Ensure table exists
         init_settings_table(db_manager)
         
+        schema_prefix = get_schema_prefix(db_manager)
+        table_name = f"{schema_prefix}user_settings"
+        
         for key, value in settings.items():
             # Convert value to JSON string if it's a dict/list, otherwise string
             if isinstance(value, (dict, list)):
@@ -114,8 +151,8 @@ def save_settings_to_db(db_manager, settings: Dict[str, Any]) -> bool:
                 val_str = str(value)
             
             # Upsert query using parameters
-            upsert_sql = """
-            INSERT INTO user_settings (setting_key, setting_value, updated_at)
+            upsert_sql = f"""
+            INSERT INTO {table_name} (setting_key, setting_value, updated_at)
             VALUES (:key, :value, CURRENT_TIMESTAMP)
             ON CONFLICT (setting_key) 
             DO UPDATE SET 
@@ -134,8 +171,11 @@ def init_feedback_table(db_manager) -> bool:
     """
     Initialize the feedback table if it doesn't exist.
     """
-    create_table_sql = """
-    CREATE TABLE IF NOT EXISTS feedback (
+    schema_prefix = get_schema_prefix(db_manager)
+    table_name = f"{schema_prefix}feedback"
+    
+    create_table_sql = f"""
+    CREATE TABLE IF NOT EXISTS {table_name} (
         id SERIAL PRIMARY KEY,
         natural_language_query TEXT,
         generated_sql TEXT,
@@ -158,8 +198,11 @@ def save_feedback_to_db(db_manager, query: str, sql: str, rating: str) -> bool:
         # Ensure table exists
         init_feedback_table(db_manager)
         
-        insert_sql = """
-        INSERT INTO feedback (natural_language_query, generated_sql, rating)
+        schema_prefix = get_schema_prefix(db_manager)
+        table_name = f"{schema_prefix}feedback"
+        
+        insert_sql = f"""
+        INSERT INTO {table_name} (natural_language_query, generated_sql, rating)
         VALUES (:query, :sql, :rating);
         """
         
@@ -177,8 +220,11 @@ def init_cache_table(db_manager) -> bool:
     """
     Initialize the query cache table if it doesn't exist.
     """
-    create_table_sql = """
-    CREATE TABLE IF NOT EXISTS query_cache (
+    schema_prefix = get_schema_prefix(db_manager)
+    table_name = f"{schema_prefix}query_cache"
+    
+    create_table_sql = f"""
+    CREATE TABLE IF NOT EXISTS {table_name} (
         query_hash VARCHAR(64) PRIMARY KEY,
         natural_language_query TEXT,
         sql_query TEXT,
@@ -200,7 +246,10 @@ def get_cached_query(db_manager, query_hash: str) -> Optional[str]:
         # Ensure table exists
         init_cache_table(db_manager)
         
-        query = f"SELECT sql_query FROM query_cache WHERE query_hash = '{query_hash}';"
+        schema_prefix = get_schema_prefix(db_manager)
+        table_name = f"{schema_prefix}query_cache"
+        
+        query = f"SELECT sql_query FROM {table_name} WHERE query_hash = '{query_hash}';"
         df = db_manager.execute_query(query)
         
         if not df.empty:
@@ -215,8 +264,11 @@ def cache_query(db_manager, query_hash: str, nl_query: str, sql_query: str) -> b
     Cache a generated SQL query.
     """
     try:
-        insert_sql = """
-        INSERT INTO query_cache (query_hash, natural_language_query, sql_query)
+        schema_prefix = get_schema_prefix(db_manager)
+        table_name = f"{schema_prefix}query_cache"
+        
+        insert_sql = f"""
+        INSERT INTO {table_name} (query_hash, natural_language_query, sql_query)
         VALUES (:hash, :nl_query, :sql_query)
         ON CONFLICT (query_hash) DO NOTHING;
         """
@@ -230,3 +282,239 @@ def cache_query(db_manager, query_hash: str, nl_query: str, sql_query: str) -> b
     except Exception as e:
         logger.error(f"Error caching query: {str(e)}")
         return False
+
+
+# ============================================================================
+# USER AUTHENTICATION & SESSION MANAGEMENT
+# ============================================================================
+
+def init_user_tables(db_manager) -> bool:
+    """
+    Initialize user management tables: user_profiles, chat_sessions, and conversation_history.
+    
+    Args:
+        db_manager: DatabaseManager instance
+        
+    Returns:
+        bool: True if all tables created successfully, False otherwise
+    """
+    try:
+        schema_prefix = get_schema_prefix(db_manager)
+        profiles_table = f"{schema_prefix}user_profiles"
+        sessions_table = f"{schema_prefix}chat_sessions"
+        history_table = f"{schema_prefix}conversation_history"
+        
+        # Table 1: user_profiles
+        create_user_profiles_sql = f"""
+        CREATE TABLE IF NOT EXISTS {profiles_table} (
+            user_id SERIAL PRIMARY KEY,
+            emp_id VARCHAR(50) UNIQUE,
+            mobile_number VARCHAR(20) UNIQUE,
+            role VARCHAR(100),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            is_active BOOLEAN DEFAULT TRUE,
+            CONSTRAINT at_least_one_identifier CHECK (
+                emp_id IS NOT NULL OR mobile_number IS NOT NULL OR role IS NOT NULL
+            )
+        );
+        """
+        
+        # Table 2: chat_sessions
+        create_chat_sessions_sql = f"""
+        CREATE TABLE IF NOT EXISTS {sessions_table} (
+            session_id VARCHAR(100) PRIMARY KEY,
+            user_id INTEGER REFERENCES {profiles_table}(user_id) ON DELETE CASCADE,
+            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            ended_at TIMESTAMP,
+            is_active BOOLEAN DEFAULT TRUE
+        );
+        """
+        
+        # Table 3: conversation_history
+        create_conversation_history_sql = f"""
+        CREATE TABLE IF NOT EXISTS {history_table} (
+            id SERIAL PRIMARY KEY,
+            session_id VARCHAR(100) REFERENCES {sessions_table}(session_id) ON DELETE CASCADE,
+            user_id INTEGER REFERENCES {profiles_table}(user_id) ON DELETE CASCADE,
+            user_query TEXT NOT NULL,
+            generated_sql TEXT,
+            execution_result JSONB,
+            feedback TEXT,
+            feedback_type VARCHAR(20),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+        
+        # Execute table creation
+        db_manager.execute_query(create_user_profiles_sql)
+        logger.info(f"Created/verified {profiles_table} table")
+        
+        db_manager.execute_query(create_chat_sessions_sql)
+        logger.info(f"Created/verified {sessions_table} table")
+        
+        db_manager.execute_query(create_conversation_history_sql)
+        logger.info(f"Created/verified {history_table} table")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error creating user tables: {str(e)}")
+        return False
+
+
+def validate_user_input(emp_id: Optional[str], mobile: Optional[str], role: Optional[str]) -> Tuple[bool, str]:
+    """
+    Validate user input ensuring at least one field is provided and formats are correct.
+    """
+    # Strip whitespace
+    emp_id = emp_id.strip() if emp_id else ""
+    mobile = mobile.strip() if mobile else ""
+    role = role.strip() if role else ""
+    
+    # Check if at least one field is provided
+    if not emp_id and not mobile and not role:
+        return False, "At least one field (Employee ID, Mobile Number, or Role) must be provided"
+    
+    # Validate mobile number format if provided
+    if mobile:
+        # Remove spaces and dashes for validation
+        mobile_clean = mobile.replace(" ", "").replace("-", "")
+        if not mobile_clean.isdigit() or len(mobile_clean) < 10:
+            return False, "Mobile number must be at least 10 digits"
+    
+    # Validate emp_id format if provided (alphanumeric)
+    if emp_id:
+        if len(emp_id) < 2:
+            return False, "Employee ID must be at least 2 characters"
+    
+    # Validate role if provided
+    if role:
+        if len(role) < 2:
+            return False, "Role must be at least 2 characters"
+    
+    return True, ""
+
+
+def register_or_get_user(db_manager, emp_id: Optional[str], 
+                         mobile: Optional[str], role: Optional[str]) -> Optional[int]:
+    """
+    Register a new user or retrieve existing user_id.
+    """
+    try:
+        # Ensure tables exist
+        init_user_tables(db_manager)
+        
+        schema_prefix = get_schema_prefix(db_manager)
+        profiles_table = f"{schema_prefix}user_profiles"
+        
+        # Clean inputs
+        emp_id = emp_id.strip() if emp_id else None
+        mobile = mobile.strip() if mobile else None
+        role = role.strip() if role else None
+        
+        # Try to find existing user by emp_id or mobile
+        existing_user_id = None
+        
+        if emp_id:
+            query = f"SELECT user_id FROM {profiles_table} WHERE emp_id = :emp_id AND is_active = TRUE;"
+            df = db_manager.execute_query(query, params={"emp_id": emp_id})
+            if not df.empty:
+                existing_user_id = int(df.iloc[0]['user_id'])
+                logger.info(f"Found existing user by emp_id: {existing_user_id}")
+        
+        if not existing_user_id and mobile:
+            query = f"SELECT user_id FROM {profiles_table} WHERE mobile_number = :mobile AND is_active = TRUE;"
+            df = db_manager.execute_query(query, params={"mobile": mobile})
+            if not df.empty:
+                existing_user_id = int(df.iloc[0]['user_id'])
+                logger.info(f"Found existing user by mobile: {existing_user_id}")
+        
+        # If user exists, update their info and return user_id
+        if existing_user_id:
+            update_sql = f"""
+            UPDATE {profiles_table} 
+            SET emp_id = COALESCE(:emp_id, emp_id),
+                mobile_number = COALESCE(:mobile, mobile_number),
+                role = COALESCE(:role, role),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = :user_id;
+            """
+            db_manager.execute_query(update_sql, params={
+                "emp_id": emp_id,
+                "mobile": mobile,
+                "role": role,
+                "user_id": existing_user_id
+            })
+            return existing_user_id
+        
+        # Create new user
+        # Note: We need to handle RETURNING differently or query back
+        insert_sql = f"""
+        INSERT INTO {profiles_table} (emp_id, mobile_number, role)
+        VALUES (:emp_id, :mobile, :role);
+        """
+        
+        db_manager.execute_query(insert_sql, params={
+            "emp_id": emp_id,
+            "mobile": mobile,
+            "role": role
+        })
+        
+        # Retrieve the newly created user_id
+        if emp_id:
+            query = f"SELECT user_id FROM {profiles_table} WHERE emp_id = :emp_id ORDER BY created_at DESC LIMIT 1;"
+            df = db_manager.execute_query(query, params={"emp_id": emp_id})
+        elif mobile:
+            query = f"SELECT user_id FROM {profiles_table} WHERE mobile_number = :mobile ORDER BY created_at DESC LIMIT 1;"
+            df = db_manager.execute_query(query, params={"mobile": mobile})
+        else:
+            query = f"SELECT user_id FROM {profiles_table} WHERE role = :role ORDER BY created_at DESC LIMIT 1;"
+            df = db_manager.execute_query(query, params={"role": role})
+        
+        if not df.empty:
+            user_id = int(df.iloc[0]['user_id'])
+            logger.info(f"Created new user with user_id: {user_id}")
+            return user_id
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error in register_or_get_user: {str(e)}")
+        return None
+
+
+def create_chat_session(db_manager, user_id: int) -> Optional[str]:
+    """
+    Create a new chat session for a user.
+    """
+    try:
+        schema_prefix = get_schema_prefix(db_manager)
+        sessions_table = f"{schema_prefix}chat_sessions"
+        
+        # Generate unique session ID
+        session_id = f"session_{user_id}_{uuid.uuid4().hex[:12]}"
+        
+        insert_sql = f"""
+        INSERT INTO {sessions_table} (session_id, user_id, started_at, is_active)
+        VALUES (:session_id, :user_id, CURRENT_TIMESTAMP, TRUE);
+        """
+        
+        db_manager.execute_query(insert_sql, params={
+            "session_id": session_id,
+            "user_id": user_id
+        })
+        
+        logger.info(f"Created chat session: {session_id} for user: {user_id}")
+        return session_id
+        
+    except Exception as e:
+        logger.error(f"Error creating chat session: {str(e)}")
+        return None
+
+
+def generate_session_id() -> str:
+    """
+    Generate a unique session ID.
+    """
+    return f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"

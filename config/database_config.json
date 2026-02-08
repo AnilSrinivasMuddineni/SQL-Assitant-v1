@@ -17,7 +17,7 @@
   },
   "ollama": {
     "base_url": "http://localhost:11434",
-    "model": "llama3.2:latest"
+    "model": "ministral-3:14b-cloud"
   },
   "settings": {
     "temperature": 0.7,
@@ -25,6 +25,13 @@
   },
   "config_management": {
     "table_name": "gen_ai.sql_rag_configurations",
-    "column_name": "table_name"
+    "column_name": "table_name",
+    "schema_name": "gen_ai"
+  },
+  "memory": {
+    "chroma_path": "./chroma_db",
+    "short_term_limit": 10,
+    "long_term_days": 30,
+    "enable_user_history": true
   }
 }

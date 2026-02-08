@@ -18,8 +18,16 @@ from src.utils import get_cached_query, cache_query
 logger = logging.getLogger(__name__)
 
 class SQLAgent:
-    def __init__(self, config_path: str = "config/database_config.json"):
-        """Initialize SQL Agent with all components."""
+    def __init__(self, config_path: str = "config/database_config.json", 
+                 user_id: Optional[int] = None, session_id: Optional[str] = None):
+        """
+        Initialize SQL Agent with all components.
+        
+        Args:
+            config_path: Path to configuration file
+            user_id: Optional user ID for memory management
+            session_id: Optional session ID for memory management
+        """
         self.config_path = config_path
         self.db_manager = DatabaseManager(config_path)
         self.ollama_manager = OllamaManager(config_path)
@@ -27,11 +35,42 @@ class SQLAgent:
         self.llm = self.ollama_manager.llm
         self._setup_logging()
         
+        # User and session tracking
+        self.user_id = user_id
+        self.session_id = session_id
+        
+        # Initialize memory manager if user_id and session_id are provided
+        self.memory_manager = None
+        if user_id and session_id:
+            try:
+                from src.memory_manager import MemoryManager
+                config = self._load_config()
+                chroma_path = config.get('memory', {}).get('chroma_path', './chroma_db')
+                self.memory_manager = MemoryManager(
+                    user_id=user_id,
+                    session_id=session_id,
+                    db_manager=self.db_manager,
+                    chroma_path=chroma_path
+                )
+                logger.info(f"MemoryManager initialized for user {user_id}, session {session_id}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize MemoryManager: {str(e)}")
+                self.memory_manager = None
+        
         # Load sample queries for context
         self.sample_queries = self._load_sample_queries()
         
         # Initialize agents
         self.agents = self._create_agents()
+    
+    def _load_config(self) -> Dict[str, Any]:
+        """Load configuration from file."""
+        try:
+            with open(self.config_path, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading config: {str(e)}")
+            return {}
 
     def _setup_logging(self):
         try:
@@ -232,6 +271,76 @@ class SQLAgent:
             examples.append("---")
             
         return "\n".join(examples)
+    
+    def prepare_enhanced_context(self, query: str, feedback: Optional[str] = None, 
+                                use_enhanced_ddl: bool = True) -> Dict[str, str]:
+        """
+        Prepare enhanced context with conversation history, schema with comments, and feedback.
+        
+        Args:
+            query: Current user query
+            feedback: Optional user feedback for corrections
+            use_enhanced_ddl: Whether to use enhanced DDLs with column comments
+            
+        Returns:
+            Dictionary with formatted context components
+        """
+        from src.prompt_templates import format_conversation_history, format_user_feedback
+        
+        # Get conversation history if memory manager is available
+        conversation_history = "No previous conversation."
+        if self.memory_manager:
+            conversation_history = self.memory_manager.format_for_prompt(limit=10)
+        
+        # Get relevant DDLs using RAG
+        relevant_table_ddls = self.vector_store.retrieve_relevant_ddls(query)
+        
+        # Get enhanced DDLs with comments if requested
+        schema_with_comments = ""
+        if use_enhanced_ddl and relevant_table_ddls:
+            try:
+                # Extract table names from DDL strings and get enhanced versions
+                enhanced_ddls = []
+                for ddl in relevant_table_ddls:
+                    # Try to extract table name from DDL
+                    # This is a simple approach - could be improved
+                    if "CREATE TABLE" in ddl:
+                        # Parse table name
+                        parts = ddl.split("CREATE TABLE")
+                        if len(parts) > 1:
+                            table_part = parts[1].strip().split("(")[0].strip()
+                            # Handle schema.table format
+                            if "." in table_part:
+                                schema_name, table_name = table_part.split(".", 1)
+                                table_name = table_name.strip()
+                            else:
+                                schema_name = None
+                                table_name = table_part
+                            
+                            # Get enhanced DDL
+                            enhanced_ddl = self.db_manager.get_enhanced_ddl(table_name, schema_name)
+                            enhanced_ddls.append(enhanced_ddl)
+                        else:
+                            enhanced_ddls.append(ddl)
+                    else:
+                        enhanced_ddls.append(ddl)
+                
+                schema_with_comments = "\n\n".join(enhanced_ddls)
+            except Exception as e:
+                logger.warning(f"Error getting enhanced DDLs, using regular: {str(e)}")
+                schema_with_comments = "\n\n".join(relevant_table_ddls)
+        else:
+            schema_with_comments = "\n\n".join(relevant_table_ddls) if relevant_table_ddls else "No relevant schema found."
+        
+        # Format feedback
+        user_feedback = format_user_feedback(feedback) if feedback else "No feedback provided."
+        
+        return {
+            "conversation_history": conversation_history,
+            "schema_with_comments": schema_with_comments,
+            "current_query": query,
+            "user_feedback": user_feedback
+        }
 
         if self.db_manager.engine:
             self.db_manager.engine.dispose()
@@ -278,8 +387,71 @@ class SQLAgent:
             # but log it.
             return True
 
-    def generate_sql(self, natural_language_query: str) -> Dict[str, Any]:
-        """Generate SQL query from natural language using CrewAI."""
+    def _classify_query_type(self, query: str, last_sql: Optional[str]) -> str:
+        """
+        Classify if query is a new question or modification of previous SQL.
+        
+        Args:
+            query: Current user query
+            last_sql: Last SQL generated in this session
+            
+        Returns:
+            'NEW_QUERY' or 'MODIFICATION'
+        """
+        # If no last SQL, it must be new
+        if not last_sql:
+            logger.info("No last SQL found, classifying as NEW_QUERY")
+            return 'NEW_QUERY'
+        
+        # Check for modification keywords
+        modification_keywords = [
+            'previous', 'last', 'above', 'that query', 'same query',
+            'add', 'remove', 'fix', 'change', 'modify', 'update',
+            'also include', 'instead', 'replace', 'adjust', 'correct',
+            'use', 'switch', 'alter', 'edit'
+        ]
+        
+        query_lower = query.lower()
+        
+        # Strong indicators of modification
+        if any(keyword in query_lower for keyword in modification_keywords[:5]):
+            logger.info(f"Detected modification keyword in query, classifying as MODIFICATION")
+            return 'MODIFICATION'
+        
+        # Weaker indicators - use LLM for confirmation
+        if any(keyword in query_lower for keyword in modification_keywords[5:]):
+            logger.info("Detected potential modification keyword, using LLM classifier")
+            try:
+                from src.prompt_templates import QUERY_TYPE_CLASSIFIER
+                
+                prompt = QUERY_TYPE_CLASSIFIER.format(
+                    user_message=query,
+                    last_sql=last_sql[:200] if last_sql else "None"  # Truncate for context
+                )
+                
+                response = self.llm.invoke(prompt).strip().upper()
+                logger.info(f"LLM classification response: {response}")
+                
+                return 'MODIFICATION' if 'MODIFICATION' in response else 'NEW_QUERY'
+            except Exception as e:
+                logger.warning(f"Error in LLM classification: {str(e)}, defaulting to NEW_QUERY")
+                return 'NEW_QUERY'
+        
+        # Default to new query
+        logger.info("No modification keywords detected, classifying as NEW_QUERY")
+        return 'NEW_QUERY'
+
+    def generate_sql(self, natural_language_query: str, feedback: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Generate SQL query from natural language using CrewAI with memory and feedback support.
+        
+        Args:
+            natural_language_query: User's natural language query
+            feedback: Optional feedback for query correction
+            
+        Returns:
+            Dictionary with success status and generated SQL or error
+        """
         try:
             # 0. Check Relevancy
             if not self._check_relevancy(natural_language_query):
@@ -295,26 +467,41 @@ Please ask SQL-related questions like:
                     "error": error_message
                 }
 
-            # 1. Check Cache
-            query_hash = hashlib.sha256(natural_language_query.encode()).hexdigest()
-            cached_sql = get_cached_query(self.db_manager, query_hash)
-            
-            if cached_sql:
-                logger.info("Cache hit! Returning cached SQL.")
-                return {
-                    "success": True,
-                    "sql_query": cached_sql,
-                    "cached": True
-                }
+            # 1. Check Cache (skip if feedback is provided since it's a correction)
+            if not feedback:
+                query_hash = hashlib.sha256(natural_language_query.encode()).hexdigest()
+                cached_sql = get_cached_query(self.db_manager, query_hash)
+                
+                if cached_sql:
+                    logger.info("Cache hit! Returning cached SQL.")
+                    return {
+                        "success": True,
+                        "sql_query": cached_sql,
+                        "cached": True
+                    }
 
-            # Get relevant DDLs using RAG
-            relevant_ddls = self.vector_store.retrieve_relevant_ddls(natural_language_query)
+            # 2. Get last SQL from memory (for modification detection)
+            last_sql = None
+            if self.memory_manager:
+                last_sql = self.memory_manager.get_last_sql()
             
-            # Create context
-            schema_context = self._create_schema_context(relevant_ddls)
-            examples_context = self._create_examples_context()
+            # 3. Classify query type (NEW_QUERY or MODIFICATION)
+            query_type = self._classify_query_type(natural_language_query, last_sql)
+            logger.info(f"Query classified as: {query_type}")
+
+            # 4. Prepare enhanced context with memory and feedback
+            enhanced_context = self.prepare_enhanced_context(
+                query=natural_language_query,
+                feedback=feedback,
+                use_enhanced_ddl=True
+            )
             
-            # Create tasks
+            # 5. Create context strings
+            conversation_history = enhanced_context["conversation_history"]
+            schema_context = enhanced_context["schema_with_comments"]
+            user_feedback = enhanced_context["user_feedback"]
+            
+            # Create tasks with enhanced context
             analysis_task = Task(
                 description=f"""Analyze the following natural language query and identify:
                 1. The main entities/tables involved
@@ -323,10 +510,17 @@ Please ask SQL-related questions like:
                 4. Any aggregation requirements (COUNT, SUM, AVG, etc.)
                 5. Any sorting requirements
                 
-                Query: {natural_language_query}
+                ## Conversation History:
+                {conversation_history}
                 
-                Database Schema Context (DDLs):
+                ## Current Query: 
+                {natural_language_query}
+                
+                ## Database Schema Context (with column comments):
                 {schema_context}
+                
+                ## Previous Feedback:
+                {user_feedback}
                 
                 Provide a detailed analysis in JSON format:
                 {{
@@ -334,7 +528,8 @@ Please ask SQL-related questions like:
                     "operation": "SELECT/INSERT/UPDATE/DELETE",
                     "filters": ["list of filtering conditions"],
                     "aggregations": ["list of aggregation functions needed"],
-                    "sorting": ["list of sorting requirements"]
+                    "sorting": ["list of sorting requirements"],
+                    "feedback_notes": "any corrections needed based on feedback"
                 }}""",
                 agent=self.agents["sql_analyst"],
                 expected_output="JSON analysis of the query requirements",
@@ -345,31 +540,87 @@ Please ask SQL-related questions like:
                 description=f"""Based on the analysis, provide detailed database context including:
                 1. Table relationships and foreign keys based on DDLs
                 2. Data types and constraints
-                3. Indexing considerations
+                3. Column descriptions and their meanings
+                4. Indexing considerations
                 
-                Schema Context (DDLs):
+                ## Schema Context (DDLs with column comments):
                 {schema_context}
                 
-                Provide database-specific insights for SQL generation.""",
+                ## Previous Feedback/Corrections:
+                {user_feedback}
+                
+                Provide database-specific insights for SQL generation.
+                Pay special attention to:
+                - Column names and descriptions (look for comments after --)
+                - Any corrections mentioned in feedback
+                - Proper JOIN conditions""",
                 agent=self.agents["db_expert"],
                 expected_output="Database context and insights",
                 callback=self._log_task_output
             )
             
-            generation_task = Task(
-                description=f"""Generate a valid PostgreSQL SQL query for the following request.
-                
-                Query: {natural_language_query}
-                
-                Schema Context:
-                {schema_context}
-                
-                CRITICAL INSTRUCTIONS:
-                - Output ONLY the raw SQL query.
-                - NO "Thought:", "Final Answer:", or explanations.
-                - NO markdown formatting (no ```sql).
-                - Start the output directly with the SQL verb (SELECT, INSERT, etc.).
-                - Do not include "I now can give a great answer".
+            # Create generation task - adapt based on query type
+            if query_type == 'MODIFICATION' and last_sql:
+                # Modification mode: provide last SQL and ask for targeted changes
+                generation_task = Task(
+                    description=f"""MODIFICATION REQUEST: The user wants to modify the previous SQL query.
+                    
+                    ## Last SQL Generated:
+                    {last_sql}
+                    
+                    ## User's Modification Request:
+                    {natural_language_query}
+                    
+                    ## Conversation History:
+                    {conversation_history}
+                    
+                    ## Schema Context (with column descriptions after --):
+                    {schema_context}
+                    
+                    ## Previous Feedback/Corrections:
+                    {user_feedback}
+                    
+                    CRITICAL INSTRUCTIONS FOR MODIFICATION:
+                    - START with the last SQL query shown above
+                    - Apply ONLY the specific changes requested by the user
+                    - Keep all other parts of the query unchanged
+                    - If user says "add column X", add it to SELECT clause
+                    - If user says "fix join", correct the JOIN condition only
+                    - If user says "filter by Y", add/modify WHERE clause
+                    - Output ONLY the modified raw SQL query
+                    - NO "Thought:", "Final Answer:", or explanations
+                    - NO markdown formatting (no ```sql)
+                    - Start directly with SELECT/INSERT/UPDATE/DELETE
+                    """,
+                    agent=self.agents["sql_developer"],
+                    expected_output="Modified SQL query based on last SQL",
+                    callback=self._log_task_output
+                )
+            else:
+                # New query mode: standard generation
+                generation_task = Task(
+                    description=f"""Generate a valid PostgreSQL SQL query for the following request.
+                    
+                    ## Current User Query:
+                    {natural_language_query}
+                    
+                    ## Conversation History:
+                    {conversation_history}
+                    
+                    ## Schema Context (with column descriptions after --):
+                    {schema_context}
+                    
+                    ## Previous Feedback/Corrections:
+                    {user_feedback}
+                    
+                    CRITICAL INSTRUCTIONS:
+                    - Output ONLY the raw SQL query
+                    - NO "Thought:", "Final Answer:", or explanations
+                    - NO markdown formatting (no ```sql)
+                - Start the output directly with the SQL verb (SELECT, INSERT, etc.)
+                - Do not include "I now can give a great answer"
+                - If feedback mentions corrections (e.g., "use customer_no instead of customer_id"), apply them
+                - Pay attention to column names in the schema comments
                 """,
                 agent=self.agents["sql_developer"],
                 expected_output="Raw SQL query string only",
@@ -386,8 +637,7 @@ Please ask SQL-related questions like:
             
             # Execute crew
             result = crew.kickoff()
-            # logging.debug("result from crew ", result)
-            sql_str = getattr(result, "raw", None)  # Or replace "output" with actual attribute
+            sql_str = getattr(result, "raw", None)
             logging.info(f"Final result raw: {sql_str}")
 
             if sql_str is None:
@@ -415,8 +665,21 @@ Please ask SQL-related questions like:
                         "error": "Failed to extract valid SQL from agent output"
                     }
             
-            # Cache the successful result
-            cache_query(self.db_manager, query_hash, natural_language_query, sql_query)
+            # Cache the successful result (only if no feedback was used)
+            if not feedback:
+                cache_query(self.db_manager, query_hash, natural_language_query, sql_query)
+            
+            # Save to memory if memory manager is available
+            if self.memory_manager:
+                try:
+                    self.memory_manager.add_interaction(
+                        user_query=natural_language_query,
+                        generated_sql=sql_query,
+                        feedback=feedback,
+                        feedback_type='correction' if feedback else None
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to save interaction to memory: {str(e)}")
             
             return {
                 "success": True,
