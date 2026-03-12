@@ -1,0 +1,60 @@
+INFO:src.ollama_llm:Initializing Ollama with model='qwen3.5:397b-cloud', base_url='http://localhost:11434'
+D:\1_Projects-AI\SQL-feature-chatmemory-240126\SQL-Assitant-v1\src\ollama_llm.py:28: LangChainDeprecationWarning: The class `ChatOpenAI` was deprecated in LangChain 0.0.10 and will be removed in 1.0. An updated version of the class exists in the `langchain-openai package and should be used instead. To use it run `pip install -U `langchain-openai` and import as `from `langchain_openai import ChatOpenAI``.
+  self.llm = ChatOpenAI(
+INFO:chromadb.telemetry.product.posthog:Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+INFO:src.vector_store:Vector Store initialized with collection: sql_ddl_embeddings
+2026-03-12 20:58:44,316 - root - INFO - Logging configured: level=DEBUG, handlers=['console', 'file']
+2026-03-12 20:58:44,316 - src.logger - ERROR - Error creating logging tables: Database not connected. Call connect() first.
+2026-03-12 20:58:44,317 - src.sql_agent - INFO - PostgresTextMemory will be initialized for user: emp:perf_test_123
+2026-03-12 20:58:44,317 - src.sql_agent - INFO - Using LLM: <class 'langchain_community.chat_models.openai.ChatOpenAI'>
+2026-03-12 20:58:44,317 - src.sql_agent - INFO - LLM Model Name: qwen3.5:397b-cloud
+2026-03-12 20:58:44,320 - crewai.utilities.llm_utils - ERROR - Error instantiating LLM from unknown object type: Error importing native provider: OPENAI_API_KEY is required
+Starting Antigravity Performance Verification...
+Traceback (most recent call last):
+  File "C:\Users\user\AppData\Local\Programs\Python\Python313\Lib\site-packages\crewai\llm.py", line 413, in __new__
+    native_class(model=model_string, provider=provider, **kwargs_copy),
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\user\AppData\Local\Programs\Python\Python313\Lib\site-packages\crewai\llms\providers\openai\completion.py", line 250, in __init__
+    client_config = self._get_client_params()
+  File "C:\Users\user\AppData\Local\Programs\Python\Python313\Lib\site-packages\crewai\llms\providers\openai\completion.py", line 338, in _get_client_params
+    raise ValueError("OPENAI_API_KEY is required")
+ValueError: OPENAI_API_KEY is required
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\1_Projects-AI\SQL-feature-chatmemory-240126\SQL-Assitant-v1\scripts\verify_performance.py", line 53, in <module>
+    verify_performance()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "D:\1_Projects-AI\SQL-feature-chatmemory-240126\SQL-Assitant-v1\scripts\verify_performance.py", line 18, in verify_performance
+    agent = SQLAgent(user_id=1, session_id="test_perf", string_user_id="emp:perf_test_123")
+  File "D:\1_Projects-AI\SQL-feature-chatmemory-240126\SQL-Assitant-v1\src\sql_agent.py", line 89, in __init__
+    self.agents = self._create_agents()
+                  ~~~~~~~~~~~~~~~~~~~^^
+  File "D:\1_Projects-AI\SQL-feature-chatmemory-240126\SQL-Assitant-v1\src\sql_agent.py", line 170, in _create_agents
+    sql_analyst = Agent(
+        role="SQL Analyst",
+    ...<6 lines>...
+        llm=self.llm
+    )
+  File "C:\Users\user\AppData\Local\Programs\Python\Python313\Lib\site-packages\pydantic\main.py", line 253, in __init__
+    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
+  File "C:\Users\user\AppData\Local\Programs\Python\Python313\Lib\site-packages\crewai\agent\internal\meta.py", line 57, in post_init_setup_with_extensions
+    result = original_func(self)
+  File "C:\Users\user\AppData\Local\Programs\Python\Python313\Lib\site-packages\crewai\agent\core.py", line 274, in post_init_setup
+    self.llm = create_llm(self.llm)
+               ~~~~~~~~~~^^^^^^^^^^
+  File "C:\Users\user\AppData\Local\Programs\Python\Python313\Lib\site-packages\crewai\utilities\llm_utils.py", line 66, in create_llm
+    raise e
+  File "C:\Users\user\AppData\Local\Programs\Python\Python313\Lib\site-packages\crewai\utilities\llm_utils.py", line 53, in create_llm
+    return LLM(
+        model=model,
+    ...<6 lines>...
+        api_base=api_base,
+    )
+  File "C:\Users\user\AppData\Local\Programs\Python\Python313\Lib\site-packages\crewai\llm.py", line 418, in __new__
+    raise ImportError(f"Error importing native provider: {e}") from e
+ImportError: Error importing native provider: OPENAI_API_KEY is required
+2026-03-12 20:58:44,794 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): us.i.posthog.com:443
+2026-03-12 20:58:46,004 - urllib3.connectionpool - DEBUG - https://us.i.posthog.com:443 "POST /batch/ HTTP/1.1" 200 15
+2026-03-12 20:58:46,014 - asyncio - DEBUG - Using proactor: IocpProactor

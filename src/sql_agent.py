@@ -14,19 +14,24 @@ from src.database_manager import DatabaseManager
 from src.ollama_llm import OllamaManager
 from src.vector_store import VectorStore
 from src.utils import get_cached_query, cache_query
+from src.logger import AgentLogger
+import time
 
 logger = logging.getLogger(__name__)
 
 class SQLAgent:
     def __init__(self, config_path: str = "config/database_config.json", 
-                 user_id: Optional[int] = None, session_id: Optional[str] = None):
+                 user_id: Optional[int] = None, session_id: Optional[str] = None,
+                 string_user_id: Optional[str] = None):
         """
         Initialize SQL Agent with all components.
         
         Args:
             config_path: Path to configuration file
-            user_id: Optional user ID for memory management
-            session_id: Optional session ID for memory management
+            user_id: Optional integer user ID (legacy MemoryManager path)
+            session_id: Optional session ID (legacy MemoryManager path)
+            string_user_id: Normalized string user ID, e.g. "emp:123" or "mob:9876543210".
+                            When provided, PostgresTextMemory is used for conversational memory.
         """
         self.config_path = config_path
         self.db_manager = DatabaseManager(config_path)
@@ -38,10 +43,30 @@ class SQLAgent:
         # User and session tracking
         self.user_id = user_id
         self.session_id = session_id
+        self.string_user_id = string_user_id  # Normalized string format
         
-        # Initialize memory manager if user_id and session_id are provided
-        self.memory_manager = None
-        if user_id and session_id:
+        # Setup Agent Logger
+        self.logger_instance = AgentLogger(self.db_manager)
+        
+        # --- PostgresTextMemory (preferred, no ChromaDB dependency) ---
+        self.pg_memory: Any = None
+        if string_user_id:
+            try:
+                from src.postgres_text_memory import PostgresTextMemory
+                from src.utils import get_schema_prefix
+                # Need DB connected to init tables; defer until connect() is called
+                # We store the class ref and init after connect
+                self._pg_memory_class = PostgresTextMemory
+                logger.info(f"PostgresTextMemory will be initialized for user: {string_user_id}")
+            except ImportError as e:
+                logger.warning(f"Could not import PostgresTextMemory: {e}")
+                self._pg_memory_class = None
+        else:
+            self._pg_memory_class = None
+        
+        # --- Legacy ChromaDB MemoryManager (kept for backward compat) ---
+        self.memory_manager: Any = None
+        if user_id and session_id and not string_user_id:
             try:
                 from src.memory_manager import MemoryManager
                 config = self._load_config()
@@ -177,6 +202,34 @@ class SQLAgent:
             llm=self.llm
         )
         
+        # Monkey-patch execute_task to log agent interaction
+        # Keeps wrapper overhead < 1px latency.
+        def wrap_agent(agent_obj, role_name):
+            original_execute = agent_obj.execute_task
+            def logging_execute_task(task, context=None, tools=None):
+                t0 = time.time()
+                res = original_execute(task, context=context, tools=tools)
+                t_ms = int((time.time() - t0) * 1000)
+                try:
+                    if self.logger_instance and self.string_user_id:
+                        self.logger_instance.log_agent_interaction(
+                            user_id=self.string_user_id,
+                            message_id=None,
+                            agent_type=role_name,
+                            request=str(task.description)[:1000],
+                            response=str(res),
+                            time_ms=t_ms
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to log agent {role_name}: {e}")
+                return res
+            # Bypass Pydantic v2 strict assignment
+            object.__setattr__(agent_obj, 'execute_task', logging_execute_task)
+
+        wrap_agent(sql_analyst, 'analyst')
+        wrap_agent(db_expert, 'expert')
+        wrap_agent(sql_developer, 'developer')
+        
         return {
             "sql_analyst": sql_analyst,
             "db_expert": db_expert,
@@ -184,9 +237,29 @@ class SQLAgent:
         }
     
     def connect_database(self) -> bool:
-        """Connect to the database and initialize vector store."""
+        """Connect to the database and initialize vector store + pg_memory."""
         if self.db_manager.connect():
             try:
+                # Initialize PostgresTextMemory now that DB is connected
+                if self._pg_memory_class and self.string_user_id:
+                    try:
+                        config = self._load_config()
+                        schema = config.get('database', {}).get('schema', 'sql_rag')
+                        schema_prefix = f"{schema}." if schema else ''
+                        self.pg_memory = self._pg_memory_class(
+                            db_manager=self.db_manager,
+                            schema_prefix=schema_prefix
+                        )
+                        # Register the default session for this user
+                        self.pg_memory.create_session(
+                            user_id=self.string_user_id,
+                            session_id=self.session_id
+                        )
+                        logger.info(f"PostgresTextMemory initialized for {self.string_user_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to initialize PostgresTextMemory: {e}")
+                        self.pg_memory = None
+
                 # Fetch all DDLs and store in vector DB
                 logger.info("Fetching DDLs for Vector Store...")
                 ddls = self.db_manager.get_all_ddls()
@@ -272,6 +345,31 @@ class SQLAgent:
             
         return "\n".join(examples)
     
+    def init_pg_memory(self) -> bool:
+        """Initialize PostgresTextMemory after DB connection. Called from app after connect."""
+        if getattr(self, 'logger_instance', None):
+            self.logger_instance.init_logging_tables()
+            
+        if self._pg_memory_class and self.string_user_id and self.db_manager.engine:
+            try:
+                config = self._load_config()
+                schema = config.get('database', {}).get('schema', 'sql_rag')
+                schema_prefix = f"{schema}." if schema else ''
+                self.pg_memory = self._pg_memory_class(
+                    db_manager=self.db_manager,
+                    schema_prefix=schema_prefix
+                )
+                if self.session_id:
+                    self.pg_memory.create_session(
+                        user_id=self.string_user_id,
+                        session_id=self.session_id
+                    )
+                logger.info(f"PostgresTextMemory initialized for {self.string_user_id}")
+                return True
+            except Exception as e:
+                logger.warning(f"init_pg_memory failed: {e}")
+        return False
+
     def prepare_enhanced_context(self, query: str, feedback: Optional[str] = None, 
                                 use_enhanced_ddl: bool = True) -> Dict[str, str]:
         """
@@ -285,46 +383,74 @@ class SQLAgent:
         Returns:
             Dictionary with formatted context components
         """
-        from src.prompt_templates import format_conversation_history, format_user_feedback
+        from src.prompt_templates import format_conversation_history, format_user_feedback, format_messages_for_prompt
         
-        # Get conversation history if memory manager is available
-        conversation_history = "No previous conversation."
-        if self.memory_manager:
+        # --- PostgresTextMemory path (preferred) ---
+        if self.pg_memory and self.string_user_id:
+            try:
+                messages: List[Dict[str, Any]] = self.pg_memory.get_relevant_context(
+                    user_id=self.string_user_id,
+                    current_query=query,
+                    limit=10
+                )
+                conversation_history = self.pg_memory.format_for_prompt(messages)
+            except Exception as e:
+                logger.warning(f"pg_memory.get_relevant_context failed: {e}")
+                conversation_history = "No previous conversation."
+        elif self.memory_manager:
+            # --- Legacy ChromaDB path ---
             conversation_history = self.memory_manager.format_for_prompt(limit=10)
+        else:
+            conversation_history = "No previous conversation."
         
-        # Get relevant DDLs using RAG
-        relevant_table_ddls = self.vector_store.retrieve_relevant_ddls(query)
+        # Get relevant DDLs using RAG with performance trace
+        top_ddls, top_tables, relevance_scores, query_time_ms = self.vector_store.semantic_search_ddl(query, top_k=5)
+        
+        # Log semantic retrieval
+        if self.logger_instance and self.string_user_id:
+            try:
+                self.logger_instance.log_semantic_ddl_retrieval(
+                    user_id=self.string_user_id,
+                    message_id=None,
+                    prompt=query,
+                    top_tables=top_tables,
+                    scores=relevance_scores,
+                    query_time_ms=query_time_ms
+                )
+            except Exception as e:
+                logger.warning(f"Error logging DDL retrieval: {e}")
+                
+        # Prepare debug_info for the prompt
+        debug_info = f'"""\nCHROMA DB SEMANTIC RETRIEVAL (Top {len(top_tables)} tables by cosine similarity):\n'
+        debug_info += f"DEBUG TRACE:\n- Prompt: \"{query}\"\n"
+        debug_info += f"- Retrieved: {top_tables} [scores: {relevance_scores}]\n"
+        debug_info += f"- ChromaDB query: {query_time_ms}ms\n"
+        debug_info += '"""'
+        
+        relevant_table_ddls = top_ddls
         
         # Get enhanced DDLs with comments if requested
         schema_with_comments = ""
         if use_enhanced_ddl and relevant_table_ddls:
             try:
-                # Extract table names from DDL strings and get enhanced versions
                 enhanced_ddls = []
                 for ddl in relevant_table_ddls:
-                    # Try to extract table name from DDL
-                    # This is a simple approach - could be improved
                     if "CREATE TABLE" in ddl:
-                        # Parse table name
                         parts = ddl.split("CREATE TABLE")
                         if len(parts) > 1:
                             table_part = parts[1].strip().split("(")[0].strip()
-                            # Handle schema.table format
                             if "." in table_part:
                                 schema_name, table_name = table_part.split(".", 1)
                                 table_name = table_name.strip()
                             else:
                                 schema_name = None
                                 table_name = table_part
-                            
-                            # Get enhanced DDL
                             enhanced_ddl = self.db_manager.get_enhanced_ddl(table_name, schema_name)
                             enhanced_ddls.append(enhanced_ddl)
                         else:
                             enhanced_ddls.append(ddl)
                     else:
                         enhanced_ddls.append(ddl)
-                
                 schema_with_comments = "\n\n".join(enhanced_ddls)
             except Exception as e:
                 logger.warning(f"Error getting enhanced DDLs, using regular: {str(e)}")
@@ -333,17 +459,18 @@ class SQLAgent:
             schema_with_comments = "\n\n".join(relevant_table_ddls) if relevant_table_ddls else "No relevant schema found."
         
         # Format feedback
-        user_feedback = format_user_feedback(feedback) if feedback else "No feedback provided."
+        detected_feedback = feedback
+        if not detected_feedback and self.pg_memory and self.string_user_id:
+            detected_feedback = self.pg_memory.extract_feedback(query)
+        user_feedback = format_user_feedback(detected_feedback) if detected_feedback else format_user_feedback(None)
         
         return {
             "conversation_history": conversation_history,
             "schema_with_comments": schema_with_comments,
             "current_query": query,
-            "user_feedback": user_feedback
+            "user_feedback": user_feedback,
+            "debug_info": debug_info
         }
-
-        if self.db_manager.engine:
-            self.db_manager.engine.dispose()
 
     def _check_relevancy(self, query: str) -> bool:
         """
@@ -467,13 +594,39 @@ Please ask SQL-related questions like:
                     "error": error_message
                 }
 
-            # 1. Check Cache (skip if feedback is provided since it's a correction)
+            # 1. Save user message to PostgresTextMemory
+            if self.pg_memory and self.string_user_id:
+                try:
+                    feedback_tag = self.pg_memory.extract_feedback(natural_language_query)
+                    self.pg_memory.save_message(
+                        user_id=self.string_user_id,
+                        role='user',
+                        content=natural_language_query,
+                        session_id=self.session_id,
+                        feedback=feedback_tag
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to save user message to pg_memory: {e}")
+
+            # 1b. Check Cache (skip if feedback is provided since it's a correction)
             if not feedback:
                 query_hash = hashlib.sha256(natural_language_query.encode()).hexdigest()
                 cached_sql = get_cached_query(self.db_manager, query_hash)
                 
                 if cached_sql:
                     logger.info("Cache hit! Returning cached SQL.")
+                    # Still save to memory for conversation continuity
+                    if self.pg_memory and self.string_user_id:
+                        try:
+                            self.pg_memory.save_message(
+                                user_id=self.string_user_id,
+                                role='sql',
+                                content=cached_sql,
+                                session_id=self.session_id,
+                                sql_generated={"query": cached_sql, "source": "cache"}
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to save cached SQL to pg_memory: {e}")
                     return {
                         "success": True,
                         "sql_query": cached_sql,
@@ -482,10 +635,16 @@ Please ask SQL-related questions like:
 
             # 2. Get last SQL from memory (for modification detection)
             last_sql = None
-            if self.memory_manager:
+            if self.pg_memory and self.string_user_id:
+                last_sql = self.pg_memory.get_last_sql(self.string_user_id)
+            elif self.memory_manager:
                 last_sql = self.memory_manager.get_last_sql()
             
-            # 3. Classify query type (NEW_QUERY or MODIFICATION)
+            # 3. Extract feedback from query if not passed explicitly (pg_memory path)
+            if not feedback and self.pg_memory and self.string_user_id:
+                feedback = self.pg_memory.extract_feedback(natural_language_query)
+            
+            # 4. Classify query type (NEW_QUERY or MODIFICATION)
             query_type = self._classify_query_type(natural_language_query, last_sql)
             logger.info(f"Query classified as: {query_type}")
 
@@ -669,8 +828,35 @@ Please ask SQL-related questions like:
             if not feedback:
                 cache_query(self.db_manager, query_hash, natural_language_query, sql_query)
             
-            # Save to memory if memory manager is available
-            if self.memory_manager:
+            # Save to PostgresTextMemory (preferred path)
+            if self.pg_memory and self.string_user_id:
+                try:
+                    # Save assistant explanation message
+                    self.pg_memory.save_message(
+                        user_id=self.string_user_id,
+                        role='assistant',
+                        content=f"Generated SQL for: {natural_language_query[:100]}",
+                        session_id=self.session_id
+                    )
+                    # Save SQL as separate 'sql' role message with JSONB
+                    self.pg_memory.save_message(
+                        user_id=self.string_user_id,
+                        role='sql',
+                        content=sql_query,
+                        session_id=self.session_id,
+                        sql_generated={
+                            "query": sql_query,
+                            "original_request": natural_language_query,
+                            "query_type": query_type,
+                            "modification": feedback or None
+                        }
+                    )
+                    logger.info(f"Saved SQL to pg_memory for user {self.string_user_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to save to pg_memory: {e}")
+            
+            # Also save to legacy MemoryManager if active
+            elif self.memory_manager:
                 try:
                     self.memory_manager.add_interaction(
                         user_query=natural_language_query,

@@ -2,6 +2,7 @@ import json
 import logging
 import time
 import uuid
+import secrets
 import re
 from typing import Dict, Any, Optional, Tuple
 from datetime import datetime
@@ -62,7 +63,7 @@ def format_time_taken(start_time: float) -> str:
     """
     elapsed = time.time() - start_time
     minutes = elapsed / 60
-    return f"{minutes:.2f}m"
+    return f"{minutes:.2f} mins"
 
 def get_schema_prefix(db_manager) -> str:
     """
@@ -285,6 +286,124 @@ def cache_query(db_manager, query_hash: str, nl_query: str, sql_query: str) -> b
 
 
 # ============================================================================
+# USER ID NORMALIZATION
+# ============================================================================
+
+def normalize_user_id(emp_id: Optional[str], mobile: Optional[str]) -> Optional[str]:
+    """
+    Normalize inputs into a canonical user_id string.
+
+    Priority: emp_id > mobile (if both provided, emp_id wins)
+    Format:
+        emp_id  -> "emp:12345"
+        mobile  -> "mob:9876543210"
+
+    Args:
+        emp_id: Optional employee ID string
+        mobile: Optional mobile number string
+
+    Returns:
+        Normalized user_id string, or None if neither is provided
+    """
+    emp_id = emp_id.strip() if emp_id else ""
+    mobile = mobile.strip() if mobile else ""
+
+    # Remove non-digit characters from mobile for normalization
+    mobile_clean = re.sub(r'[^\d]', '', mobile) if mobile else ""
+
+    if emp_id:
+        return f"emp:{emp_id}"
+    elif mobile_clean:
+        return f"mob:{mobile_clean}"
+    return None
+
+def get_db_user_id(db_manager, emp_id: Optional[str], mobile: Optional[str]) -> Optional[int]:
+    """Retrieve or create an integer user_id from user_profiles."""
+    try:
+        schema_prefix = get_schema_prefix(db_manager)
+        profiles_table = f"{schema_prefix}user_profiles"
+        emp_val = emp_id.strip() if emp_id else None
+        mob_val = mobile.strip() if mobile else None
+
+        conds = []
+        params = {}
+        if emp_val:
+            conds.append("emp_id = :emp")
+            params['emp'] = emp_val
+        if mob_val:
+            conds.append("mobile_number = :mob")
+            params['mob'] = mob_val
+
+        if not conds:
+            return None
+
+        where_clause = " OR ".join(conds)
+        select_sql = f"SELECT user_id FROM {profiles_table} WHERE {where_clause} LIMIT 1;"
+        df = db_manager.execute_query(select_sql, params=params)
+
+        if df is not None and not df.empty:
+            return int(df.iloc[0]['user_id'])
+
+        # Insert new
+        cols = []
+        vals = []
+        if emp_val:
+            cols.append("emp_id")
+            vals.append(":emp")
+        if mob_val:
+            cols.append("mobile_number")
+            vals.append(":mob")
+
+        insert_sql = f"INSERT INTO {profiles_table} ({', '.join(cols)}) VALUES ({', '.join(vals)}) ON CONFLICT DO NOTHING;"
+        db_manager.execute_query(insert_sql, params=params)
+        
+        # Select again
+        df_new = db_manager.execute_query(select_sql, params=params)
+        if df_new is not None and not df_new.empty:
+            return int(df_new.iloc[0]['user_id'])
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Error in get_db_user_id: {e}")
+    return None
+
+def validate_user_input_v2(
+    emp_id: Optional[str], mobile: Optional[str]
+) -> Tuple[bool, str, Optional[str]]:
+    """
+    Validate user input for the conversational memory flow.
+
+    Requires either emp_id OR mobile (role is no longer sufficient).
+    Returns the normalized user_id on success.
+
+    Args:
+        emp_id: Optional employee ID
+        mobile: Optional mobile number
+
+    Returns:
+        Tuple of (is_valid: bool, error_message: str, user_id: Optional[str])
+    """
+    emp_id = emp_id.strip() if emp_id else ""
+    mobile = mobile.strip() if mobile else ""
+    mobile_clean = re.sub(r'[^\d]', '', mobile) if mobile else ""
+
+    if not emp_id and not mobile_clean:
+        return (
+            False,
+            "Please provide Employee ID or Mobile Number to identify your session.",
+            None
+        )
+
+    if emp_id and len(emp_id) < 2:
+        return False, "Employee ID must be at least 2 characters.", None
+
+    if mobile_clean and len(mobile_clean) < 10:
+        return False, "Mobile number must be at least 10 digits.", None
+
+    user_id = normalize_user_id(emp_id or None, mobile_clean or None)
+    return True, "", user_id
+
+
+# ============================================================================
 # USER AUTHENTICATION & SESSION MANAGEMENT
 # ============================================================================
 
@@ -493,7 +612,7 @@ def create_chat_session(db_manager, user_id: int) -> Optional[str]:
         sessions_table = f"{schema_prefix}chat_sessions"
         
         # Generate unique session ID
-        session_id = f"session_{user_id}_{uuid.uuid4().hex[:12]}"
+        session_id = f"session_{user_id}_{secrets.token_hex(6)}"
         
         insert_sql = f"""
         INSERT INTO {sessions_table} (session_id, user_id, started_at, is_active)
@@ -517,4 +636,4 @@ def generate_session_id() -> str:
     """
     Generate a unique session ID.
     """
-    return f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    return f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(4)}"

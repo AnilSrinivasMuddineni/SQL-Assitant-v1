@@ -13,10 +13,15 @@ import os
 os.environ["OPENAI_API_KEY"] = "NA"
 os.environ["OPENAI_API_BASE"] = "http://localhost:11434/v1"
 os.environ["OPENAI_BASE_URL"] = "http://localhost:11434/v1"
-os.environ["OPENAI_MODEL_NAME"] = "sqlcoder:7b" # Default model, will be updated dynamically
+os.environ["OPENAI_MODEL_NAME"] = "sqlcoder:7b"  # Default model, updated dynamically
 
 from src.sql_agent import SQLAgent
-from src.utils import load_config, save_config, format_time_taken, load_settings_from_db, save_settings_to_db, init_settings_table, save_feedback_to_db
+from src.utils import (
+    load_config, save_config, format_time_taken,
+    load_settings_from_db, save_settings_to_db,
+    init_settings_table, save_feedback_to_db,
+    normalize_user_id, validate_user_input_v2
+)
 
 # Constants
 CONFIG_PATH = "config/database_config.json"
@@ -49,66 +54,72 @@ st.markdown("""
         margin-top: 0.5rem;
         font-style: italic;
     }
+    .user-id-badge {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        display: inline-block;
+    }
+    .modification-banner {
+        background-color: #fff3cd;
+        border-left: 4px solid #ffc107;
+        padding: 6px 12px;
+        margin-bottom: 8px;
+        border-radius: 4px;
+        font-size: 0.85rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
+
 def initialize_session_state():
     """Initialize session state variables."""
+    # Per-user message dict: {user_id: [msg, ...]}
     if 'messages' not in st.session_state:
-        st.session_state.messages = []
+        st.session_state.messages = {}
     if 'sql_agent' not in st.session_state:
         st.session_state.sql_agent = None
     if 'db_connected' not in st.session_state:
         st.session_state.db_connected = False
     if 'ollama_connected' not in st.session_state:
         st.session_state.ollama_connected = False
-    
+
     # User authentication state
     if 'user_authenticated' not in st.session_state:
         st.session_state.user_authenticated = False
     if 'user_id' not in st.session_state:
-        st.session_state.user_id = None
+        st.session_state.user_id = None          # String format: "emp:123" or "mob:9876543210"
     if 'session_id' not in st.session_state:
         st.session_state.session_id = None
     if 'user_info' not in st.session_state:
         st.session_state.user_info = {}
-    
-    # Load local config for DB connection details
+
+    # Load local config
     if 'config' not in st.session_state:
         st.session_state.config = load_config(CONFIG_PATH)
 
-    # Try to connect to DB and load remote settings if possible
+    # Try to connect to DB on startup (without user_id)
     if not st.session_state.db_connected and st.session_state.sql_agent is None:
         try:
-            # Create agent without user_id/session_id initially
             agent = SQLAgent(CONFIG_PATH)
-            
-            # Connect to DB first (without automatically loading everything via connect_database)
             if agent.db_manager.connect():
                 st.session_state.sql_agent = agent
                 st.session_state.db_connected = True
-                
-                # Initialize user tables for authentication
+
                 from src.utils import init_user_tables
                 init_user_tables(agent.db_manager)
-                
-                # Attempt to load schema using the config-driven strategy first
-                logger_msg = "Attempting to load schema from configuration..."
-                print(logger_msg) # Ensure visibility in logs
-                
+
                 if not agent.load_configured_schema():
-                    # Fallback: Load all DDLs if config loading failed or returned no tables
-                    print("Config loading failed or empty. Falling back to loading ALL DDLs.")
                     ddls = agent.db_manager.get_all_ddls()
                     agent.vector_store.store_ddls(ddls)
-                
-                # Ensure settings table exists
+
                 init_settings_table(agent.db_manager)
-                
-                # Load settings from DB
+
                 db_settings = load_settings_from_db(agent.db_manager)
                 if db_settings:
-                    # Merge DB settings into session config
                     if 'ollama' in db_settings:
                         st.session_state.config['ollama'] = db_settings['ollama']
                     if 'settings' in db_settings:
@@ -117,35 +128,25 @@ def initialize_session_state():
         except Exception as e:
             st.error(f"Initialization Error: {str(e)}")
 
+
 def save_current_settings():
     """Save current sidebar settings."""
     new_config = st.session_state.config.copy()
-    
-    # Update Ollama settings
     new_config['ollama']['base_url'] = st.session_state.ollama_url
     new_config['ollama']['model'] = st.session_state.ollama_model
-    
-    # Update UI settings
     if 'settings' not in new_config:
         new_config['settings'] = {}
     new_config['settings']['temperature'] = st.session_state.temperature
     new_config['settings']['max_tokens'] = st.session_state.max_tokens
-    
-    # 1. Save DB connection details locally (Preserve existing DB config)
+
     if save_config(CONFIG_PATH, new_config):
         st.session_state.config = new_config
         st.toast("Local config saved")
-    
-    # 2. Save Preferences to Database if connected
+
     if st.session_state.db_connected and st.session_state.sql_agent:
-        db_settings = {
-            "ollama": new_config['ollama'],
-            "settings": new_config['settings']
-        }
+        db_settings = {"ollama": new_config['ollama'], "settings": new_config['settings']}
         if save_settings_to_db(st.session_state.sql_agent.db_manager, db_settings):
             st.toast("Preferences saved to Database")
-            
-            # Update the running agent with new model settings
             st.session_state.sql_agent.update_model(
                 model_name=new_config['ollama']['model'],
                 base_url=new_config['ollama']['base_url']
@@ -155,100 +156,164 @@ def save_current_settings():
     else:
         st.warning("Connect to Database to save preferences remotely")
 
+
+@st.dialog("Agent Performance Diagnostics", width="large")
+def show_diagnostics_dialog(metrics):
+    import pandas as pd
+    chroma = metrics.get('chroma', {})
+    agents = metrics.get('agent_pipeline', [])
+    
+    st.markdown("##### 🔬 Semantic Retrieval Logs")
+    for r_log in chroma.get('recent_logs', [])[:5]:
+        try:
+            sc = r_log.get('relevance_scores', {})
+            if isinstance(sc, str):
+                import json
+                sc = json.loads(sc)
+            scores_str = ", ".join([f"{k}({v})" for k, v in sc.items()][:2])
+            mins = r_log.get("chroma_query_time_ms", 0) / 60000.0
+            st.caption(f'"{r_log["user_prompt"]}" → {scores_str} [{mins:.4f} mins]')
+        except:
+            mins = r_log.get("chroma_query_time_ms", 0) / 60000.0
+            st.caption(f'"{r_log.get("user_prompt", "")}" → {r_log.get("matched_tables")} [{mins:.4f} mins]')
+    
+    st.divider()
+    st.markdown("##### 🔍 Agent Tracing")
+    if agents:
+        agents_df = pd.DataFrame(agents)
+        if 'avg_time' in agents_df.columns:
+            agents_df['avg_time_mins'] = (agents_df['avg_time'] / 60000.0).round(4).astype(str) + ' mins'
+        st.dataframe(agents_df, use_container_width=True)
+    
+    st.markdown("##### ⚡ Raw Logs")
+    raw_logs = metrics.get('raw_logs', [])
+    if raw_logs:
+        raw_df = pd.DataFrame(raw_logs)
+        if 'time_taken_ms' in raw_df.columns:
+            raw_df['time_taken_mins'] = (raw_df['time_taken_ms'] / 60000.0).round(4).astype(str) + ' mins'
+        st.dataframe(raw_df, use_container_width=True)
+
 def sidebar_settings():
     """Render the settings sidebar."""
     with st.sidebar:
         st.title("⚙ Settings")
-        
-        # User Profile / Authentication Section
-        with st.expander("👤 User Profile", expanded=not st.session_state.user_authenticated):
+
+        # ── User Identification Panel ──────────────────────────────────────
+        with st.expander("👤 User Identity", expanded=not st.session_state.user_authenticated):
             if not st.session_state.user_authenticated:
-                st.info("Please complete your profile to start chatting")
-                
-                # Input fields
-                emp_id = st.text_input("Employee ID", key="input_emp_id", help="Optional")
-                mobile = st.text_input("Mobile Number", key="input_mobile", help="Optional")
-                role = st.text_input("Role", key="input_role", help="Optional")
-                
+                st.info("Enter **Employee ID** OR **Mobile Number** to start")
+
+                emp_id = st.text_input(
+                    "Employee ID", key="input_emp_id",
+                    placeholder="e.g. 12345",
+                    help="Will become emp:12345"
+                )
+                mobile = st.text_input(
+                    "Mobile Number", key="input_mobile",
+                    placeholder="e.g. 9876543210",
+                    help="Will become mob:9876543210"
+                )
+
                 if st.button("🚀 Start Session", use_container_width=True):
-                    from src.utils import validate_user_input, register_or_get_user, create_chat_session
-                    
-                    # Validate input
-                    is_valid, error_msg = validate_user_input(emp_id, mobile, role)
-                    
+                    # Use new v2 validator that requires emp_id or mobile
+                    is_valid, error_msg, user_id = validate_user_input_v2(emp_id, mobile)
+
                     if not is_valid:
                         st.error(error_msg)
                     elif not st.session_state.db_connected:
-                        st.error("Database not connected. Cannot authenticate.")
+                        st.error("Database not connected. Cannot start session.")
                     else:
-                        with st.spinner("Authenticating..."):
+                        from src.utils import get_db_user_id
+                        db_user_id = get_db_user_id(st.session_state.sql_agent.db_manager, emp_id, mobile)
+                        if not db_user_id:
+                            st.error("Error creating or fetching user profile from database.")
+                            st.stop()
+                            
+                        with st.spinner(f"Starting session as **{user_id}** (DB ID: {db_user_id})..."):
                             try:
-                                # Register or get existing user
-                                user_id = register_or_get_user(
-                                    st.session_state.sql_agent.db_manager,
-                                    emp_id if emp_id else None,
-                                    mobile if mobile else None,
-                                    role if role else None
+                                import secrets
+                                session_id = f"sess_{db_user_id}_{secrets.token_hex(6)}"
+
+                                # Build new SQLAgent with string_user_id mapped to DB integer ID for pg_memory
+                                new_agent = SQLAgent(
+                                    CONFIG_PATH,
+                                    session_id=session_id,
+                                    string_user_id=str(db_user_id)
                                 )
-                                
-                                if user_id:
-                                    # Create new chat session
-                                    session_id = create_chat_session(
-                                        st.session_state.sql_agent.db_manager,
-                                        user_id
-                                    )
-                                    
-                                    if session_id:
-                                        # Update session state
-                                        st.session_state.user_id = user_id
-                                        st.session_state.session_id = session_id
-                                        st.session_state.user_authenticated = True
-                                        st.session_state.user_info = {
-                                            "emp_id": emp_id or "N/A",
-                                            "mobile": mobile or "N/A",
-                                            "role": role or "N/A"
-                                        }
-                                        
-                                        # Recreate SQLAgent with user_id and session_id
-                                        st.session_state.sql_agent = SQLAgent(
-                                            CONFIG_PATH,
-                                            user_id=user_id,
-                                            session_id=session_id
-                                        )
-                                        
-                                        # Reconnect to DB and reload schema
-                                        if st.session_state.sql_agent.db_manager.connect():
-                                            if not st.session_state.sql_agent.load_configured_schema():
-                                                ddls = st.session_state.sql_agent.db_manager.get_all_ddls()
-                                                st.session_state.sql_agent.vector_store.store_ddls(ddls)
-                                        
-                                        st.success(f"✅ Session started! (Session: {session_id[:12]}...)")
-                                        st.rerun()
-                                    else:
-                                        st.error("Failed to create chat session")
+                                if new_agent.db_manager.connect():
+                                    if not new_agent.load_configured_schema():
+                                        ddls = new_agent.db_manager.get_all_ddls()
+                                        new_agent.vector_store.store_ddls(ddls)
+
+                                    # Initialize PostgresTextMemory tables + session
+                                    new_agent.init_pg_memory()
+
+                                    st.session_state.sql_agent = new_agent
+                                    st.session_state.user_id = user_id
+                                    st.session_state.session_id = session_id
+                                    st.session_state.user_authenticated = True
+                                    st.session_state.user_info = {
+                                        "emp_id": emp_id or "—",
+                                        "mobile": mobile or "—"
+                                    }
+
+                                    # Initialize per-user message list if not already
+                                    if user_id not in st.session_state.messages:
+                                        st.session_state.messages[user_id] = []
+
+                                    st.success(f"✅ Session started as **{user_id}**")
+                                    st.rerun()
                                 else:
-                                    st.error("Failed to register/retrieve user")
-                                    
+                                    st.error("Failed to connect to database.")
                             except Exception as e:
-                                st.error(f"Authentication error: {str(e)}")
+                                st.error(f"Session start error: {str(e)}")
             else:
-                # Show current user info
-                st.success("✅ Authenticated")
-                st.write(f"**Employee ID:** {st.session_state.user_info.get('emp_id', 'N/A')}")
-                st.write(f"**Mobile:** {st.session_state.user_info.get('mobile', 'N/A')}")
-                st.write(f"**Role:** {st.session_state.user_info.get('role', 'N/A')}")
-                st.write(f"**Session:** `{st.session_state.session_id[:16] if st.session_state.session_id else 'N/A'}...`")
-                
+                # Show current user session info
+                user_id = st.session_state.user_id
+                st.markdown(
+                    f'<div class="user-id-badge">🔑 {user_id}</div>',
+                    unsafe_allow_html=True
+                )
+                st.write(f"**Session:** `{st.session_state.session_id[:20] if st.session_state.session_id else 'N/A'}...`")
+                msg_count = len(st.session_state.messages.get(user_id, []))
+                st.caption(f"📝 {msg_count} messages in this session")
+
                 if st.button("🔄 New Session", use_container_width=True):
-                    # Clear authentication and start fresh
                     st.session_state.user_authenticated = False
                     st.session_state.user_id = None
                     st.session_state.session_id = None
-                    st.session_state.messages = []
+                    st.session_state.sql_agent = None
+                    st.session_state.db_connected = False
                     st.rerun()
-        
+
         st.markdown("---")
-        
+
+        # Agent Diagnostics Dashboard
+        if st.session_state.user_authenticated:
+            with st.expander("📊 Agent Diagnostics", expanded=False):
+                user_id = st.session_state.user_id
+                if st.session_state.sql_agent and getattr(st.session_state.sql_agent, 'logger_instance', None):
+                    with st.spinner("Loading metrics..."):
+                        # Ensure we query metrics matching the db integer user_id
+                        agent_user_id = getattr(st.session_state.sql_agent, "string_user_id", user_id)
+                        metrics = st.session_state.sql_agent.logger_instance.get_performance_dashboard(agent_user_id)
+                        if metrics:
+                            chroma = metrics.get('chroma', {})
+                            c_mins = chroma.get('avg_time_ms', 0) / 60000.0
+                            st.write(f"**Chroma**: {c_mins:.4f} mins")
+                            agents = metrics.get('agent_pipeline', [])
+                            if agents:
+                                pipeline_str = " | ".join([f"{a['agent'][:3].upper()}({a['avg_time']/60000.0:.2f} mins)" for a in agents])
+                                st.write(f"**Agents**: {pipeline_str}")
+                            st.write(f"**SQL Match**: {metrics.get('overall_sql_success', 0)}%")
+                            
+                            if st.button("🔍 View Detailed Logs", use_container_width=True):
+                                show_diagnostics_dialog(metrics)
+                        else:
+                            st.info("No metrics yet.")
+                            
+        st.markdown("---")
+
         # Connection Status
         if st.session_state.db_connected:
             st.success("✅ Database Connected")
@@ -259,52 +324,44 @@ def sidebar_settings():
                 st.rerun()
 
         # Model Settings
-        with st.expander(" Model Configuration", expanded=True):
+        with st.expander("🤖 Model Configuration", expanded=True):
             ollama_config = st.session_state.config.get('ollama', {})
             ui_settings = st.session_state.config.get('settings', {})
-            
+
             st.text_input("Base URL", value=ollama_config.get('base_url', 'http://localhost:11434'), key='ollama_url')
-            
-            # Fetch available models
+
             available_models = []
             if st.session_state.sql_agent:
                 available_models = st.session_state.sql_agent.ollama_manager.get_available_models()
-            
-            # Fallback if agent not initialized or fetch failed
+
             if not available_models:
-                # Try to create a temporary manager to fetch models if agent isn't ready
                 try:
                     from src.ollama_llm import OllamaManager
                     temp_manager = OllamaManager(CONFIG_PATH)
                     available_models = temp_manager.get_available_models()
-                except:
+                except Exception:
                     pass
 
             current_model = ollama_config.get('model', 'sqlcoder:7b')
-            
             if available_models:
-                # Ensure current model is in the list
                 if current_model not in available_models:
                     available_models.append(current_model)
-                
                 index = available_models.index(current_model)
                 st.selectbox("Model", options=available_models, index=index, key='ollama_model')
             else:
                 st.text_input("Model", value=current_model, key='ollama_model', help="Could not fetch models from Ollama")
-            
-            # Ensure defaults are in session state since widgets are hidden
+
             if 'temperature' not in st.session_state:
                 st.session_state.temperature = ui_settings.get('temperature', 0.7)
             if 'max_tokens' not in st.session_state:
                 st.session_state.max_tokens = ui_settings.get('max_tokens', 2048)
-            
+
             if st.button("Test Ollama Connection"):
                 with st.spinner("Testing..."):
                     try:
                         save_current_settings()
                         if st.session_state.sql_agent is None:
                             st.session_state.sql_agent = SQLAgent(CONFIG_PATH)
-                        
                         if st.session_state.sql_agent.test_ollama_connection():
                             st.session_state.ollama_connected = True
                             st.success("Ollama Connected!")
@@ -313,55 +370,39 @@ def sidebar_settings():
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
 
-        # Save Button
         st.markdown("---")
-        if st.button(" Save Settings", use_container_width=True):
+        if st.button("💾 Save Settings", use_container_width=True):
             save_current_settings()
 
+
 def visualize_data(df: pd.DataFrame):
-    """
-    Automatically visualize data based on column types.
-    """
+    """Automatically visualize data based on column types."""
     if df.empty or len(df) < 2:
         return
 
-    # Identify column types
     numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
     categorical_cols = df.select_dtypes(include=['object', 'category', 'string']).columns.tolist()
     date_cols = df.select_dtypes(include=['datetime']).columns.tolist()
 
     st.markdown("### Visualization")
-
     try:
-        # Case 1: Time Series (1 Date + 1 Numeric)
         if len(date_cols) >= 1 and len(numeric_cols) >= 1:
             fig = px.line(df, x=date_cols[0], y=numeric_cols[0], title=f"{numeric_cols[0]} over Time")
             st.plotly_chart(fig, use_container_width=True)
-        
-        # Case 2: Bar Chart (1 Categorical + 1 Numeric)
         elif len(categorical_cols) >= 1 and len(numeric_cols) >= 1:
-            # Limit to top 20 for readability
+            chart_df = df.head(20) if len(df) > 20 else df
             if len(df) > 20:
-                chart_df = df.head(20)
                 st.caption("Showing top 20 rows")
-            else:
-                chart_df = df
-            
-            fig = px.bar(chart_df, x=categorical_cols[0], y=numeric_cols[0], title=f"{numeric_cols[0]} by {categorical_cols[0]}")
+            fig = px.bar(chart_df, x=categorical_cols[0], y=numeric_cols[0],
+                         title=f"{numeric_cols[0]} by {categorical_cols[0]}")
             st.plotly_chart(fig, use_container_width=True)
-            
-        # Case 3: Scatter Plot (2 Numeric)
         elif len(numeric_cols) >= 2:
-            fig = px.scatter(df, x=numeric_cols[0], y=numeric_cols[1], title=f"{numeric_cols[1]} vs {numeric_cols[0]}")
+            fig = px.scatter(df, x=numeric_cols[0], y=numeric_cols[1],
+                             title=f"{numeric_cols[1]} vs {numeric_cols[0]}")
             st.plotly_chart(fig, use_container_width=True)
-            
-        # Case 4: Pie Chart (1 Categorical + 1 Numeric, small dataset)
-        elif len(categorical_cols) >= 1 and len(numeric_cols) >= 1 and len(df) <= 10:
-            fig = px.pie(df, names=categorical_cols[0], values=numeric_cols[0], title=f"Distribution of {numeric_cols[0]}")
-            st.plotly_chart(fig, use_container_width=True)
-            
     except Exception as e:
         st.warning(f"Could not generate chart: {str(e)}")
+
 
 def handle_feedback(query, sql, rating):
     """Handle feedback submission."""
@@ -373,176 +414,211 @@ def handle_feedback(query, sql, rating):
     else:
         st.warning("Connect to DB to save feedback")
 
-def main():
-    initialize_session_state()
-    sidebar_settings()
-    
-    # Main Chat Interface
-    st.title("💬 SQL Assistant")
-    
-    # Check if user is authenticated
-    if not st.session_state.user_authenticated:
-        st.warning("⚠️ Please complete your profile in the sidebar to start chatting")
-        st.info("👈 Click on 'User Profile' in the sidebar and fill in at least one field (Employee ID, Mobile Number, or Role) to begin.")
-        return
-    
-    # Conversation context indicator
-    if st.session_state.messages:
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.caption(f"💬 {len(st.session_state.messages)} messages in this conversation")
-        with col2:
-            with st.expander("💡 Tips"):
-                st.markdown("""
-                **How to use:**
-                - Ask new questions naturally
-                - Say "add column X" to modify previous SQL
-                - Say "fix the join" to correct issues
-                - Say "use Y instead of Z" for corrections
-                - Rate responses with 👍 or 👎
-                - Everything happens in the chat!
-                """)
-    
-    # Display chat messages
-    for i, message in enumerate(st.session_state.messages):
+
+def render_chat_messages(user_id: str):
+    """Render the conversation history for the current user."""
+    messages = st.session_state.messages.get(user_id, [])
+
+    for i, message in enumerate(messages):
         with st.chat_message(message["role"]):
+            # Show modification banner if this was a modification turn
+            if message.get("is_modification"):
+                st.markdown(
+                    '<div class="modification-banner">🔄 Modifying previous query...</div>',
+                    unsafe_allow_html=True
+                )
+
             st.markdown(message["content"])
+
+            # Show SQL block if present
             if "sql" in message:
-                st.code(message["sql"], language="sql")
-            
+                with st.expander("🔍 View SQL", expanded=(i == len(messages) - 1)):
+                    st.code(message["sql"], language="sql")
+
+            # Show results if present
             if "results" in message:
                 st.dataframe(message["results"])
                 visualize_data(message["results"])
-            
-            # Add Run Query button if SQL exists but no results yet
+
+            # Run Query button if SQL exists but no results
             if "sql" in message and "results" not in message:
                 if st.button("▶️ Run Query", key=f"run_{i}"):
                     with st.spinner("Executing query..."):
                         if st.session_state.sql_agent:
                             exec_res = st.session_state.sql_agent.execute_sql(message["sql"])
                             if exec_res["success"]:
-                                # Update message with results
-                                st.session_state.messages[i]["results"] = pd.DataFrame(exec_res["data"])
-                                st.session_state.messages[i]["time_taken"] += f" + {format_time_taken(time.time())} (exec)" # Approximate
-                                
-                                # Save execution result to memory
-                                if st.session_state.sql_agent.memory_manager:
-                                    try:
-                                        st.session_state.sql_agent.memory_manager.add_interaction(
-                                            user_query=st.session_state.messages[i-1]["content"] if i > 0 else "",
-                                            generated_sql=message["sql"],
-                                            execution_result=exec_res
-                                        )
-                                    except Exception as e:
-                                        pass  # Silent fail for memory update
-                                
+                                st.session_state.messages[user_id][i]["results"] = pd.DataFrame(exec_res["data"])
                                 st.rerun()
                             else:
                                 st.error(f"Execution failed: {exec_res.get('error')}")
 
+            # Response time
             if "time_taken" in message:
-                st.markdown(f'<p class="response-time">⏱ Response time: {message["time_taken"]}</p>', unsafe_allow_html=True)
-            
-            # Add feedback section for assistant messages
+                st.markdown(
+                    f'<p class="response-time">⏱ Response time: {message["time_taken"]}</p>',
+                    unsafe_allow_html=True
+                )
+
+            # Feedback buttons for assistant messages
             if message["role"] == "assistant" and "sql" in message:
                 st.markdown("---")
                 st.markdown("**Rate this response:**")
                 col1, col2, col3 = st.columns([1, 1, 8])
-                
                 with col1:
                     if st.button("👍", key=f"up_{i}", help="Helpful"):
-                        user_query = ""
-                        if i > 0 and st.session_state.messages[i-1]["role"] == "user":
-                            user_query = st.session_state.messages[i-1]["content"]
+                        user_query = messages[i - 1]["content"] if i > 0 else ""
                         handle_feedback(user_query, message["sql"], "positive")
-                
                 with col2:
                     if st.button("👎", key=f"down_{i}", help="Not Helpful"):
-                        user_query = ""
-                        if i > 0 and st.session_state.messages[i-1]["role"] == "user":
-                            user_query = st.session_state.messages[i-1]["content"]
+                        user_query = messages[i - 1]["content"] if i > 0 else ""
                         handle_feedback(user_query, message["sql"], "negative")
-                
                 with col3:
-                    st.caption("� Need corrections? Just type them in the chat below!")
+                    st.caption("💬 Need changes? Just type them below!")
 
-    # Chat Input
+
+def main():
+    initialize_session_state()
+    sidebar_settings()
+
+    # Main Chat Interface
+    st.title("💬 SQL Assistant")
+
+    # ── Block main app until user_id is set ──────────────────────────────
+    if not st.session_state.user_authenticated:
+        st.warning("⚠️ Please identify yourself in the sidebar to start chatting")
+        st.info(
+            "👈 Enter your **Employee ID** (e.g. `12345`) or **Mobile Number** "
+            "in the sidebar and click **Start Session**.\n\n"
+            "Your conversation is private and scoped to your identity."
+        )
+        # Show demo info
+        with st.expander("ℹ️ How conversational memory works"):
+            st.markdown("""
+            **Iterative SQL refinement:**
+            1. Ask any data question → get SQL
+            2. Say *"fix the JOIN to use customer_no"* → agent edits the exact SQL
+            3. Say *"add WHERE amount > 50000"* → filter appended to Step 2's SQL
+            4. Each user has **isolated memory** — corrections for one user never bleed into another
+            5. Full-text search retrieves relevant context even from 20+ turns back
+            """)
+        return
+
+    user_id = st.session_state.user_id
+
+    # ── Conversation header ──────────────────────────────────────────────
+    msg_count = len(st.session_state.messages.get(user_id, []))
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown(
+            f'Session: <span class="user-id-badge">🔑 {user_id}</span>&nbsp;&nbsp;'
+            f'<span style="color:#666;font-size:0.85rem">{msg_count} messages</span>',
+            unsafe_allow_html=True
+        )
+    with col2:
+        with st.expander("💡 Tips"):
+            st.markdown("""
+            **Conversational tips:**
+            - Ask new questions naturally
+            - *"fix the join"* → edits last SQL
+            - *"add WHERE amount > 50000"* → adds filter
+            - *"change GROUP BY to week"* → adjusts grouping
+            - Rate responses with 👍 or 👎
+            """)
+
+
+
+    # ── Display chat messages ────────────────────────────────────────────
+    render_chat_messages(user_id)
+
+    # ── Chat Input ───────────────────────────────────────────────────────
     if prompt := st.chat_input("Ask a question about your data..."):
-        # Add user message to chat history
-        st.session_state.messages.append({"role": "user", "content": prompt})
+        # Ensure user message list exists
+        if user_id not in st.session_state.messages:
+            st.session_state.messages[user_id] = []
+
+        # Add user message to UI history
+        st.session_state.messages[user_id].append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # Check connections
         if not st.session_state.db_connected:
             st.error("Please connect to the database first via settings.")
             return
-        
-        # Generate response
+
+        # ── Generate response ────────────────────────────────────────────
         with st.chat_message("assistant"):
-            # Create a status container
             with st.status("Processing query...", expanded=True) as status:
                 start_time = time.time()
                 try:
-                    # Update agent settings
+                    # Update agent LLM settings
                     if st.session_state.sql_agent:
                         st.session_state.sql_agent.ollama_manager.llm.temperature = st.session_state.temperature
                         st.session_state.sql_agent.ollama_manager.llm.max_tokens = st.session_state.max_tokens
 
-                    # 1. Retrieve Context
-                    status.write("Processing query...")
-                    
+                    status.write("🧠 Analyzing query and retrieving context...")
+
+                    # Detect if this looks like a modification
+                    pg_mem = getattr(st.session_state.sql_agent, 'pg_memory', None)
+                    feedback_tag = None
+                    is_modification = False
+                    if pg_mem:
+                        feedback_tag = pg_mem.extract_feedback(prompt)
+                        is_modification = feedback_tag is not None
+
+                    if is_modification:
+                        status.write(f"🔄 Modification detected: `{feedback_tag}` — retrieving prior SQL...")
+
+                    # Call generate_sql (memory saving handled inside sql_agent)
                     result = st.session_state.sql_agent.generate_sql(prompt)
-                    
-                   # status.write("🧠 Analyzing requirements and generating SQL...")
-                    
+
                     time_taken = format_time_taken(start_time)
-                    
+
                     if result["success"]:
-                        status.update(label="SQL Generated!", state="complete", expanded=False)
-                        
+                        status.update(label="✅ SQL Generated!", state="complete", expanded=False)
+
+                        sql_query = result["sql_query"]
                         response_content = ""
                         if result.get("cached"):
-                            response_content += " ( From Cache)"
-                        
-                        sql_query = result["sql_query"]
-                        
+                            response_content = "⚡ (From Cache)"
+                        elif is_modification:
+                            response_content = f"🔄 Applied modification: `{feedback_tag}`"
+
                         if response_content:
                             st.markdown(response_content)
-                        st.code(sql_query, language="sql")
-                        
-                        # Execution is now manual via the button in the message loop
-                        execution_results = None
-                        
-                        st.markdown(f'<p class="response-time"> - Response time: {time_taken}</p>', unsafe_allow_html=True)
-                        
-                        # Save to history
+
+                        with st.expander("🔍 View SQL", expanded=True):
+                            st.code(sql_query, language="sql")
+
+                        st.markdown(
+                            f'<p class="response-time">⏱ Response time: {time_taken}</p>',
+                            unsafe_allow_html=True
+                        )
+
+                        # Save to UI history
                         message_data = {
                             "role": "assistant",
-                            "content": response_content,
+                            "content": response_content or "SQL generated successfully.",
                             "sql": sql_query,
-                            "time_taken": time_taken
+                            "time_taken": time_taken,
+                            "is_modification": is_modification
                         }
-                        # We don't add results here anymore, they are added upon execution
-                        
-                        st.session_state.messages.append(message_data)
-                        
-                        # Force rerun to show the new message with the Run button
+                        st.session_state.messages[user_id].append(message_data)
                         st.rerun()
-                        
+
                     else:
-                        status.update(label="Generation Failed", state="error")
+                        status.update(label="❌ Generation Failed", state="error")
                         error_msg = f"Failed to generate SQL: {result.get('error')}"
                         st.error(error_msg)
-                        st.session_state.messages.append({
+                        st.session_state.messages[user_id].append({
                             "role": "assistant",
                             "content": error_msg,
                             "time_taken": time_taken
                         })
-                        
+
                 except Exception as e:
-                    status.update(label="Error Occurred", state="error")
+                    status.update(label="❌ Error Occurred", state="error")
                     st.error(f"An error occurred: {str(e)}")
+
 
 if __name__ == "__main__":
     main()
