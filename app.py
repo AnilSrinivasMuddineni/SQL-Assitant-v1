@@ -7,15 +7,20 @@ import pandas as pd
 import time
 import plotly.express as px
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Set dummy OpenAI API key to bypass CrewAI/LangChain strict validation
 # This is required even when using local Ollama models via ChatOpenAI
-os.environ["OPENAI_API_KEY"] = "NA"
-os.environ["OPENAI_API_BASE"] = "http://localhost:11434/v1"
-os.environ["OPENAI_BASE_URL"] = "http://localhost:11434/v1"
-os.environ["OPENAI_MODEL_NAME"] = "sqlcoder:7b"  # Default model, updated dynamically
+os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY", "NA")
+os.environ["OPENAI_API_BASE"] = os.getenv("OPENAI_API_BASE", "http://localhost:11434/v1")
+os.environ["OPENAI_BASE_URL"] = os.getenv("OPENAI_BASE_URL", "http://localhost:11434/v1")
+os.environ["OPENAI_MODEL_NAME"] = os.getenv("OPENAI_MODEL_NAME", "sqlcoder:7b")  # Default model, updated dynamically
 
 from src.sql_agent import SQLAgent
+from src.sql_agent import get_sql_agent_mode, get_effective_mode
 from src.utils import (
     load_config, save_config, format_time_taken,
     load_settings_from_db, save_settings_to_db,
@@ -100,6 +105,19 @@ def initialize_session_state():
     # Load local config
     if 'config' not in st.session_state:
         st.session_state.config = load_config(CONFIG_PATH)
+
+    # LLM provider/model selection (UI state — overrides env defaults)
+    if 'llm_provider' not in st.session_state:
+        st.session_state.llm_provider = os.getenv("LLM_PROVIDER_DEFAULT", "ollama")
+    if 'llm_model' not in st.session_state:
+        st.session_state.llm_model = os.getenv("LLM_MODEL_DEFAULT", "")
+    # Agent mode selection (UI state — overrides env default)
+    if 'agent_mode' not in st.session_state:
+        default_mode = (
+            os.getenv("SQL_AGENT_MODE") or
+            os.getenv("SQL_AGENT_MODE_DEFAULT", "multi")
+        ).strip().lower()
+        st.session_state.agent_mode = "single" if default_mode == "single" else "multi"
 
     # Try to connect to DB on startup (without user_id)
     if not st.session_state.db_connected and st.session_state.sql_agent is None:
@@ -330,26 +348,78 @@ def sidebar_settings():
 
             st.text_input("Base URL", value=ollama_config.get('base_url', 'http://localhost:11434'), key='ollama_url')
 
-            available_models = []
-            if st.session_state.sql_agent:
-                available_models = st.session_state.sql_agent.ollama_manager.get_available_models()
+            # ── Unified model list (Ollama + Enterprise) ────────────────────────
+            from src.llm_factory import get_combined_model_list
 
-            if not available_models:
+            model_entries = []
+            if st.session_state.sql_agent:
                 try:
-                    from src.ollama_llm import OllamaManager
-                    temp_manager = OllamaManager(CONFIG_PATH)
-                    available_models = temp_manager.get_available_models()
+                    model_entries = get_combined_model_list(
+                        st.session_state.sql_agent.ollama_manager
+                    )
                 except Exception:
                     pass
 
+            if not model_entries:
+                try:
+                    from src.ollama_llm import OllamaManager
+                    temp_manager = OllamaManager(CONFIG_PATH)
+                    model_entries = get_combined_model_list(temp_manager)
+                except Exception:
+                    pass
+
+            # Fallback: current ollama model as plain entry
             current_model = ollama_config.get('model', 'sqlcoder:7b')
-            if available_models:
-                if current_model not in available_models:
-                    available_models.append(current_model)
-                index = available_models.index(current_model)
-                st.selectbox("Model", options=available_models, index=index, key='ollama_model')
-            else:
-                st.text_input("Model", value=current_model, key='ollama_model', help="Could not fetch models from Ollama")
+            if not model_entries:
+                model_entries = [{
+                    "provider": "ollama",
+                    "model": current_model,
+                    "label": f"Ollama – {current_model}",
+                }]
+
+            labels = [e["label"] for e in model_entries]
+
+            # Determine current selection index
+            cur_provider = st.session_state.llm_provider
+            cur_model = st.session_state.llm_model or current_model
+            sel_index = 0
+            for i, e in enumerate(model_entries):
+                if e["provider"] == cur_provider and e["model"] == cur_model:
+                    sel_index = i
+                    break
+
+            selected_label = st.selectbox(
+                "Model",
+                options=labels,
+                index=sel_index,
+                key='unified_model_label',
+                help="Ollama models are local; Enterprise models use ENTERPRISE_LLM_* env vars."
+            )
+
+            # Store provider + model in session state when selection changes
+            for e in model_entries:
+                if e["label"] == selected_label:
+                    st.session_state.llm_provider = e["provider"]
+                    st.session_state.llm_model = e["model"]
+                    # Keep ollama_model in sync for Save Settings / legacy path
+                    if e["provider"] == "ollama":
+                        st.session_state.ollama_model = e["model"]
+                    break
+
+            # ── Agent Mode selector ─────────────────────────────────────────────
+            st.markdown("**🔁 Agent Mode**")
+            mode_options = ["multi", "single"]
+            mode_labels = ["Multi-Agent (default)", "Single-Agent"]
+            cur_mode_idx = 0 if st.session_state.agent_mode != "single" else 1
+            selected_mode_label = st.radio(
+                "Agent Mode",
+                options=mode_labels,
+                index=cur_mode_idx,
+                key="agent_mode_radio",
+                label_visibility="collapsed",
+                help="Multi-Agent: Analyst→Expert→Developer pipeline. Single-Agent: one unified call."
+            )
+            st.session_state.agent_mode = "single" if selected_mode_label == "Single-Agent" else "multi"
 
             if 'temperature' not in st.session_state:
                 st.session_state.temperature = ui_settings.get('temperature', 0.7)
@@ -369,6 +439,7 @@ def sidebar_settings():
                             st.error("Connection failed")
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
+
 
         st.markdown("---")
         if st.button("💾 Save Settings", use_container_width=True):
@@ -524,6 +595,13 @@ def main():
             - *"change GROUP BY to week"* → adjusts grouping
             - Rate responses with 👍 or 👎
             """)
+
+    # ── Agent mode badge ──────────────────────────────────────────────────────
+    _mode = st.session_state.get("agent_mode") or get_effective_mode()
+    _provider = st.session_state.get("llm_provider", "ollama")
+    _mode_label = "🔹 Single-Agent" if _mode == "single" else "🔷 Multi-Agent"
+    _provider_label = "Enterprise" if _provider == "enterprise" else "Ollama"
+    st.caption(f"Mode: **{_mode_label}** · Provider: **{_provider_label}** (`SQL_AGENT_MODE={_mode}`)")
 
 
 

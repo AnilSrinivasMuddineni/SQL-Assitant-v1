@@ -17,7 +17,73 @@ from src.utils import get_cached_query, cache_query
 from src.logger import AgentLogger
 import time
 
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
 logger = logging.getLogger(__name__)
+
+
+def get_sql_agent_mode() -> str:
+    """
+    Read the SQL agent mode from the environment.
+    Precedence: SQL_AGENT_MODE -> SQL_AGENT_MODE_DEFAULT -> 'multi'.
+    Kept for backward compatibility (used by the mode badge and tests).
+    """
+    mode = (
+        os.getenv("SQL_AGENT_MODE") or
+        os.getenv("SQL_AGENT_MODE_DEFAULT", "multi")
+    ).strip().lower()
+    return "single" if mode == "single" else "multi"
+
+
+def get_effective_mode() -> str:
+    """
+    Return the active agent mode, considering UI session state first.
+
+    Precedence:
+      1. st.session_state.agent_mode   (UI selection)
+      2. SQL_AGENT_MODE env var         (backward compat)
+      3. SQL_AGENT_MODE_DEFAULT env var (new)
+      4. 'multi'                        (hard default)
+    """
+    try:
+        import streamlit as st
+        ui_mode = st.session_state.get("agent_mode", "").strip().lower()
+        if ui_mode in ("single", "multi"):
+            return ui_mode
+    except Exception:
+        pass  # running outside Streamlit (tests, CLI)
+    return get_sql_agent_mode()
+
+
+def get_effective_provider_model() -> tuple:
+    """
+    Return (provider, model) for the current request.
+
+    Precedence:
+      1. st.session_state.llm_provider / llm_model  (UI selection)
+      2. LLM_PROVIDER_DEFAULT / LLM_MODEL_DEFAULT   (env vars)
+      3. 'ollama' + model from database_config.json  (existing default)
+    """
+    try:
+        import streamlit as st
+        ui_provider = st.session_state.get("llm_provider", "").strip().lower()
+        ui_model = st.session_state.get("llm_model", "").strip()
+        if ui_provider in ("ollama", "enterprise") and ui_model:
+            return ui_provider, ui_model
+    except Exception:
+        pass
+
+    env_provider = os.getenv("LLM_PROVIDER_DEFAULT", "ollama").strip().lower()
+    env_model = os.getenv("LLM_MODEL_DEFAULT", "").strip()
+    if env_provider in ("ollama", "enterprise") and env_model:
+        return env_provider, env_model
+
+    # Final fallback: let OllamaManager use its own config defaults
+    return "ollama", ""
 
 class SQLAgent:
     def __init__(self, config_path: str = "config/database_config.json", 
@@ -229,11 +295,33 @@ class SQLAgent:
         wrap_agent(sql_analyst, 'analyst')
         wrap_agent(db_expert, 'expert')
         wrap_agent(sql_developer, 'developer')
-        
+
+        # Single-agent path (SQLGenerator); used when SQL_AGENT_MODE=single for lower latency.
+        sql_generator = Agent(
+            role="Conversational PostgreSQL SQL Generator with RAG and feedback",
+            goal=(
+                "Analyze user intent, pick the correct tables/columns via schema context, "
+                "and generate or fix a single valid PostgreSQL SQL query in one response."
+            ),
+            backstory=(
+                "You are a senior PostgreSQL developer who has mastered the full pipeline: "
+                "understanding business intent, navigating complex schemas with inline column "
+                "comments, writing optimised SQL, and applying incremental fixes when users "
+                "ask to modify a previous query. You always emit raw SQL only — no prose, "
+                "no markdown wrappers."
+            ),
+            verbose=True,
+            allow_delegation=False,
+            llm=self.llm
+        )
+        wrap_agent(sql_generator, 'sql_generator')
+
         return {
             "sql_analyst": sql_analyst,
             "db_expert": db_expert,
-            "sql_developer": sql_developer
+            "sql_developer": sql_developer,
+            # sql_generator is used only when SQL_AGENT_MODE=single
+            "sql_generator": sql_generator,
         }
     
     def connect_database(self) -> bool:
@@ -323,7 +411,43 @@ class SQLAgent:
         self.llm = self.ollama_manager.llm
         self.agents = self._create_agents()
         logger.info(f"SQLAgent updated to use model: {model_name}")
-    
+
+    def update_llm(self, provider: str, model: str) -> None:
+        """
+        Switch the active LLM provider/model using the central factory.
+
+        Reassigns self.llm and patches llm= on all four agent objects
+        without rebuilding the entire agents dict (preserves wrap_agent logging).
+        Falls back gracefully if the factory raises (e.g. missing API key).
+
+        Args:
+            provider: 'ollama' or 'enterprise'
+            model:    model name string; empty string → use OllamaManager default
+        """
+        try:
+            from src.llm_factory import create_llm
+            new_llm = create_llm(
+                provider=provider,
+                model=model,
+                config_path=self.config_path,
+                ollama_manager=self.ollama_manager,
+            )
+            self.llm = new_llm
+            # Patch llm on each agent object in-place
+            for agent_obj in self.agents.values():
+                try:
+                    object.__setattr__(agent_obj, "llm", new_llm)
+                except Exception:
+                    agent_obj.llm = new_llm  # fallback
+            logger.info(
+                f"[SQLAgent] LLM updated: provider={provider}, model={model or '(default)'}"
+            )
+        except Exception as e:
+            logger.error(
+                f"[SQLAgent] update_llm failed (provider={provider}, model={model}): {e}. "
+                "Keeping existing LLM."
+            )
+
     def _create_schema_context(self, relevant_ddls: List[str]) -> str:
         """Create schema context from retrieved DDLs."""
         if not relevant_ddls:
@@ -470,6 +594,53 @@ class SQLAgent:
             "current_query": query,
             "user_feedback": user_feedback,
             "debug_info": debug_info
+        }
+
+    def build_single_agent_input(self, query: str, feedback: Optional[str] = None) -> Dict[str, str]:
+        """
+        Build the context dictionary required by MASTER_SINGLE_AGENT_PROMPT.
+
+        Args:
+            query:    Current natural-language query from the user.
+            feedback: Optional explicit feedback/correction string.
+
+        Returns:
+            Dict with keys: conversation_history, schema_with_comments,
+                            last_sql, current_query, user_feedback.
+        """
+        from src.prompt_templates import format_user_feedback
+
+        # Reuse the existing context builder which already handles both
+        # pg_memory and legacy MemoryManager paths for history + RAG.
+        enhanced = self.prepare_enhanced_context(
+            query=query,
+            feedback=feedback,
+            use_enhanced_ddl=True
+        )
+
+        # Retrieve the last SQL for this user (for modification detection).
+        last_sql = "None"
+        if self.pg_memory and self.string_user_id:
+            try:
+                retrieved = self.pg_memory.get_last_sql(self.string_user_id)
+                if retrieved:
+                    last_sql = retrieved
+            except Exception as exc:
+                logger.warning(f"build_single_agent_input: could not retrieve last_sql: {exc}")
+        elif self.memory_manager:
+            try:
+                retrieved = self.memory_manager.get_last_sql()
+                if retrieved:
+                    last_sql = retrieved
+            except Exception as exc:
+                logger.warning(f"build_single_agent_input (legacy): could not retrieve last_sql: {exc}")
+
+        return {
+            "conversation_history": enhanced["conversation_history"],
+            "schema_with_comments": enhanced["schema_with_comments"],
+            "last_sql": last_sql,
+            "current_query": query,
+            "user_feedback": enhanced["user_feedback"],
         }
 
     def _check_relevancy(self, query: str) -> bool:
@@ -643,159 +814,196 @@ Please ask SQL-related questions like:
             # 3. Extract feedback from query if not passed explicitly (pg_memory path)
             if not feedback and self.pg_memory and self.string_user_id:
                 feedback = self.pg_memory.extract_feedback(natural_language_query)
-            
-            # 4. Classify query type (NEW_QUERY or MODIFICATION)
-            query_type = self._classify_query_type(natural_language_query, last_sql)
-            logger.info(f"Query classified as: {query_type}")
 
-            # 4. Prepare enhanced context with memory and feedback
-            enhanced_context = self.prepare_enhanced_context(
-                query=natural_language_query,
-                feedback=feedback,
-                use_enhanced_ddl=True
+            # 4. Resolve active provider/model + agent mode from UI state (then env fallback)
+            provider, model = get_effective_provider_model()
+            mode = get_effective_mode()
+            logger.info(
+                f"[REQUEST] provider={provider}, model={model or '(config default)'}, mode={mode}"
             )
-            
-            # 5. Create context strings
-            conversation_history = enhanced_context["conversation_history"]
-            schema_context = enhanced_context["schema_with_comments"]
-            user_feedback = enhanced_context["user_feedback"]
-            
-            # Create tasks with enhanced context
-            analysis_task = Task(
-                description=f"""Analyze the following natural language query and identify:
-                1. The main entities/tables involved
-                2. The type of operation (SELECT, INSERT, UPDATE, DELETE)
-                3. Any filtering conditions (WHERE, HAVING)
-                4. Any aggregation requirements (COUNT, SUM, AVG, etc.)
-                5. Any sorting requirements
-                
-                ## Conversation History:
-                {conversation_history}
-                
-                ## Current Query: 
-                {natural_language_query}
-                
-                ## Database Schema Context (with column comments):
-                {schema_context}
-                
-                ## Previous Feedback:
-                {user_feedback}
-                
-                Provide a detailed analysis in JSON format:
-                {{
-                    "entities": ["list of main tables"],
-                    "operation": "SELECT/INSERT/UPDATE/DELETE",
-                    "filters": ["list of filtering conditions"],
-                    "aggregations": ["list of aggregation functions needed"],
-                    "sorting": ["list of sorting requirements"],
-                    "feedback_notes": "any corrections needed based on feedback"
-                }}""",
-                agent=self.agents["sql_analyst"],
-                expected_output="JSON analysis of the query requirements",
-                callback=self._log_task_output
-            )
-            
-            schema_task = Task(
-                description=f"""Based on the analysis, provide detailed database context including:
-                1. Table relationships and foreign keys based on DDLs
-                2. Data types and constraints
-                3. Column descriptions and their meanings
-                4. Indexing considerations
-                
-                ## Schema Context (DDLs with column comments):
-                {schema_context}
-                
-                ## Previous Feedback/Corrections:
-                {user_feedback}
-                
-                Provide database-specific insights for SQL generation.
-                Pay special attention to:
-                - Column names and descriptions (look for comments after --)
-                - Any corrections mentioned in feedback
-                - Proper JOIN conditions""",
-                agent=self.agents["db_expert"],
-                expected_output="Database context and insights",
-                callback=self._log_task_output
-            )
-            
-            # Create generation task - adapt based on query type
-            if query_type == 'MODIFICATION' and last_sql:
-                # Modification mode: provide last SQL and ask for targeted changes
-                generation_task = Task(
-                    description=f"""MODIFICATION REQUEST: The user wants to modify the previous SQL query.
-                    
-                    ## Last SQL Generated:
-                    {last_sql}
-                    
-                    ## User's Modification Request:
-                    {natural_language_query}
-                    
-                    ## Conversation History:
-                    {conversation_history}
-                    
-                    ## Schema Context (with column descriptions after --):
-                    {schema_context}
-                    
-                    ## Previous Feedback/Corrections:
-                    {user_feedback}
-                    
-                    CRITICAL INSTRUCTIONS FOR MODIFICATION:
-                    - START with the last SQL query shown above
-                    - Apply ONLY the specific changes requested by the user
-                    - Keep all other parts of the query unchanged
-                    - If user says "add column X", add it to SELECT clause
-                    - If user says "fix join", correct the JOIN condition only
-                    - If user says "filter by Y", add/modify WHERE clause
-                    - Output ONLY the modified raw SQL query
-                    - NO "Thought:", "Final Answer:", or explanations
-                    - NO markdown formatting (no ```sql)
-                    - Start directly with SELECT/INSERT/UPDATE/DELETE
-                    """,
-                    agent=self.agents["sql_developer"],
-                    expected_output="Modified SQL query based on last SQL",
+            # Inject the correct LLM into agents if the selection differs from current
+            self.update_llm(provider, model)
+
+            if mode == "single":
+                # ── Single-agent path (SQLGenerator) ────────────────────────────
+                # Used when SQL_AGENT_MODE=single for lower latency (one LLM call).
+                from src.prompt_templates import MASTER_SINGLE_AGENT_PROMPT
+
+                context = self.build_single_agent_input(natural_language_query, feedback)
+                query_type = "SINGLE_AGENT"  # for memory tagging below
+
+                task = Task(
+                    description=MASTER_SINGLE_AGENT_PROMPT.format(**context),
+                    agent=self.agents["sql_generator"],
+                    expected_output="Valid PostgreSQL SQL query",
                     callback=self._log_task_output
                 )
+                crew = Crew(
+                    agents=[self.agents["sql_generator"]],
+                    tasks=[task],
+                    process=Process.sequential,
+                    verbose=True
+                )
+                result = crew.kickoff()
+
             else:
-                # New query mode: standard generation
-                generation_task = Task(
-                    description=f"""Generate a valid PostgreSQL SQL query for the following request.
-                    
-                    ## Current User Query:
-                    {natural_language_query}
-                    
+                # ── Multi-agent path (Analyst → Expert → Developer) ──────────────
+                # Used when SQL_AGENT_MODE=multi (default) or env var is absent.
+
+                # 4b. Classify query type (NEW_QUERY or MODIFICATION)
+                query_type = self._classify_query_type(natural_language_query, last_sql)
+                logger.info(f"Query classified as: {query_type}")
+
+                # 4c. Prepare enhanced context with memory and feedback
+                enhanced_context = self.prepare_enhanced_context(
+                    query=natural_language_query,
+                    feedback=feedback,
+                    use_enhanced_ddl=True
+                )
+
+                # 5. Create context strings
+                conversation_history = enhanced_context["conversation_history"]
+                schema_context = enhanced_context["schema_with_comments"]
+                user_feedback = enhanced_context["user_feedback"]
+
+                # Create tasks with enhanced context
+                analysis_task = Task(
+                    description=f"""Analyze the following natural language query and identify:
+                    1. The main entities/tables involved
+                    2. The type of operation (SELECT, INSERT, UPDATE, DELETE)
+                    3. Any filtering conditions (WHERE, HAVING)
+                    4. Any aggregation requirements (COUNT, SUM, AVG, etc.)
+                    5. Any sorting requirements
+
                     ## Conversation History:
                     {conversation_history}
-                    
-                    ## Schema Context (with column descriptions after --):
+
+                    ## Current Query:
+                    {natural_language_query}
+
+                    ## Database Schema Context (with column comments):
                     {schema_context}
-                    
+
+                    ## Previous Feedback:
+                    {user_feedback}
+
+                    Provide a detailed analysis in JSON format:
+                    {{
+                        "entities": ["list of main tables"],
+                        "operation": "SELECT/INSERT/UPDATE/DELETE",
+                        "filters": ["list of filtering conditions"],
+                        "aggregations": ["list of aggregation functions needed"],
+                        "sorting": ["list of sorting requirements"],
+                        "feedback_notes": "any corrections needed based on feedback"
+                    }}""",
+                    agent=self.agents["sql_analyst"],
+                    expected_output="JSON analysis of the query requirements",
+                    callback=self._log_task_output
+                )
+
+                schema_task = Task(
+                    description=f"""Based on the analysis, provide detailed database context including:
+                    1. Table relationships and foreign keys based on DDLs
+                    2. Data types and constraints
+                    3. Column descriptions and their meanings
+                    4. Indexing considerations
+
+                    ## Schema Context (DDLs with column comments):
+                    {schema_context}
+
                     ## Previous Feedback/Corrections:
                     {user_feedback}
-                    
-                    CRITICAL INSTRUCTIONS:
-                    - Output ONLY the raw SQL query
-                    - NO "Thought:", "Final Answer:", or explanations
-                    - NO markdown formatting (no ```sql)
-                - Start the output directly with the SQL verb (SELECT, INSERT, etc.)
-                - Do not include "I now can give a great answer"
-                - If feedback mentions corrections (e.g., "use customer_no instead of customer_id"), apply them
-                - Pay attention to column names in the schema comments
-                """,
-                agent=self.agents["sql_developer"],
-                expected_output="Raw SQL query string only",
-                callback=self._log_task_output
-            )
-            
-            # Create crew
-            crew = Crew(
-                agents=list(self.agents.values()),
-                tasks=[analysis_task, schema_task, generation_task],
-                process=Process.sequential,
-                verbose=True
-            )
-            
-            # Execute crew
-            result = crew.kickoff()
+
+                    Provide database-specific insights for SQL generation.
+                    Pay special attention to:
+                    - Column names and descriptions (look for comments after --)
+                    - Any corrections mentioned in feedback
+                    - Proper JOIN conditions""",
+                    agent=self.agents["db_expert"],
+                    expected_output="Database context and insights",
+                    callback=self._log_task_output
+                )
+
+                # Create generation task — adapt based on query type
+                if query_type == 'MODIFICATION' and last_sql:
+                    # Modification mode: provide last SQL and ask for targeted changes
+                    generation_task = Task(
+                        description=f"""MODIFICATION REQUEST: The user wants to modify the previous SQL query.
+
+                        ## Last SQL Generated:
+                        {last_sql}
+
+                        ## User's Modification Request:
+                        {natural_language_query}
+
+                        ## Conversation History:
+                        {conversation_history}
+
+                        ## Schema Context (with column descriptions after --):
+                        {schema_context}
+
+                        ## Previous Feedback/Corrections:
+                        {user_feedback}
+
+                        CRITICAL INSTRUCTIONS FOR MODIFICATION:
+                        - START with the last SQL query shown above
+                        - Apply ONLY the specific changes requested by the user
+                        - Keep all other parts of the query unchanged
+                        - If user says "add column X", add it to SELECT clause
+                        - If user says "fix join", correct the JOIN condition only
+                        - If user says "filter by Y", add/modify WHERE clause
+                        - Output ONLY the modified raw SQL query
+                        - NO "Thought:", "Final Answer:", or explanations
+                        - NO markdown formatting (no ```sql)
+                        - Start directly with SELECT/INSERT/UPDATE/DELETE
+                        """,
+                        agent=self.agents["sql_developer"],
+                        expected_output="Modified SQL query based on last SQL",
+                        callback=self._log_task_output
+                    )
+                else:
+                    # New query mode: standard generation
+                    generation_task = Task(
+                        description=f"""Generate a valid PostgreSQL SQL query for the following request.
+
+                        ## Current User Query:
+                        {natural_language_query}
+
+                        ## Conversation History:
+                        {conversation_history}
+
+                        ## Schema Context (with column descriptions after --):
+                        {schema_context}
+
+                        ## Previous Feedback/Corrections:
+                        {user_feedback}
+
+                        CRITICAL INSTRUCTIONS:
+                        - Output ONLY the raw SQL query
+                        - NO "Thought:", "Final Answer:", or explanations
+                        - NO markdown formatting (no ```sql)
+                        - Start the output directly with the SQL verb (SELECT, INSERT, etc.)
+                        - Do not include "I now can give a great answer"
+                        - If feedback mentions corrections (e.g., "use customer_no instead of customer_id"), apply them
+                        - Pay attention to column names in the schema comments
+                        """,
+                        agent=self.agents["sql_developer"],
+                        expected_output="Raw SQL query string only",
+                        callback=self._log_task_output
+                    )
+
+                # Multi-agent path (Analyst → Expert → Developer); used when SQL_AGENT_MODE=multi.
+                crew = Crew(
+                    agents=[
+                        self.agents["sql_analyst"],
+                        self.agents["db_expert"],
+                        self.agents["sql_developer"],
+                    ],
+                    tasks=[analysis_task, schema_task, generation_task],
+                    process=Process.sequential,
+                    verbose=True
+                )
+                result = crew.kickoff()
             sql_str = getattr(result, "raw", None)
             logging.info(f"Final result raw: {sql_str}")
 

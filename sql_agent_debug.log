@@ -23571,3 +23571,317 @@ WHERE created_at >= date_trunc('week', CURRENT_TIMESTAMP)
 2026-03-13 00:24:20,133 - src.sql_agent - INFO - Using LLM: <class 'langchain_community.chat_models.openai.ChatOpenAI'>
 2026-03-13 00:24:20,134 - src.sql_agent - INFO - LLM Model Name: qwen3.5:397b-cloud
 2026-03-13 00:24:20,859 - urllib3.connectionpool - DEBUG - https://us.i.posthog.com:443 "POST /batch/ HTTP/1.1" 200 15
+2026-03-13 00:24:21,522 - src.database_manager - INFO - Database connection established successfully
+2026-03-13 00:24:21,522 - src.database_manager - INFO - Loading configured tables from sql_rag.sql_rag_configurations...
+2026-03-13 00:24:21,524 - src.database_manager - INFO - Found 11 tables to index: ['orders', 'products', 'order_items', 'jdl_cp_contacts', 'jdl_cp_identity', 'jdl_customer_principal', 'jdl_customer_principal_addr', 'jlkp_type', 'jlkp_value', 'krc_account', 'sre_transaction']
+2026-03-13 00:24:21,592 - urllib3.connectionpool - DEBUG - http://localhost:11434 "GET /api/tags HTTP/1.1" 200 1402
+2026-03-13 00:24:21,879 - httpcore.connection - DEBUG - close.started
+2026-03-13 00:24:21,879 - httpcore.connection - DEBUG - close.complete
+2026-03-13 00:24:21,880 - httpcore.connection - DEBUG - close.started
+2026-03-13 00:24:21,880 - httpcore.connection - DEBUG - close.complete
+2026-03-13 00:24:21,880 - httpcore.connection - DEBUG - close.started
+2026-03-13 00:24:21,880 - httpcore.connection - DEBUG - close.complete
+2026-03-13 00:24:21,881 - httpcore.connection - DEBUG - close.started
+2026-03-13 00:24:21,881 - httpcore.connection - DEBUG - close.complete
+2026-03-13 00:24:22,261 - src.sql_agent - INFO - Clearing Vector Store for configured schema load...
+2026-03-13 00:24:22,439 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-13 00:24:22,731 - urllib3.connectionpool - DEBUG - https://us.i.posthog.com:443 "POST /batch/ HTTP/1.1" 200 15
+2026-03-13 00:24:24,561 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-13 00:24:24,562 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-13 00:24:26,661 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-13 00:24:26,662 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-13 00:24:28,772 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-13 00:24:28,774 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-13 00:24:30,943 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-13 00:24:30,944 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-13 00:24:33,102 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-13 00:24:33,103 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-13 00:24:35,655 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-13 00:24:35,657 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-13 00:24:38,065 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-13 00:24:38,067 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-13 00:24:40,195 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-13 00:24:40,197 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-13 00:24:42,311 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-13 00:24:42,312 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-13 00:24:44,674 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-13 00:24:44,676 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-13 00:24:47,563 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-13 00:24:47,756 - src.vector_store - INFO - Stored 11 DDLs in Vector Store (ChromaDB + Nomic).
+2026-03-13 00:24:47,758 - src.sql_agent - INFO - Successfully loaded configured schema into Vector Store.
+2026-03-13 00:24:47,766 - src.logger - INFO - Logging tables and indexes verified.
+2026-03-13 00:24:47,770 - src.postgres_text_memory - INFO - PostgresTextMemory: tables initialized successfully
+2026-03-13 00:24:47,776 - src.postgres_text_memory - INFO - Session created: sess_2_1c304b9ce1ea for user 2
+2026-03-13 00:24:47,777 - src.sql_agent - INFO - PostgresTextMemory initialized for 2
+2026-03-13 00:24:48,071 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-13 00:24:50,120 - urllib3.connectionpool - DEBUG - http://localhost:11434 "GET /api/tags HTTP/1.1" 200 1402
+2026-03-13 00:29:22,894 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-13 00:29:24,945 - urllib3.connectionpool - DEBUG - http://localhost:11434 "GET /api/tags HTTP/1.1" 200 1402
+2026-03-17 00:11:19,493 - root - INFO - Logging configured: level=DEBUG, handlers=['console', 'file']
+2026-03-17 00:11:19,494 - src.sql_agent - INFO - Using LLM: <class 'langchain_community.chat_models.openai.ChatOpenAI'>
+2026-03-17 00:11:19,494 - src.sql_agent - INFO - LLM Model Name: qwen3.5:397b-cloud
+2026-03-17 00:11:19,935 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): us.i.posthog.com:443
+2026-03-17 00:11:20,947 - urllib3.connectionpool - DEBUG - https://us.i.posthog.com:443 "POST /batch/ HTTP/1.1" 200 15
+2026-03-17 00:13:27,636 - root - INFO - Logging configured: level=DEBUG, handlers=['console', 'file']
+2026-03-17 00:13:27,636 - src.sql_agent - INFO - Using LLM: <class 'langchain_community.chat_models.openai.ChatOpenAI'>
+2026-03-17 00:13:27,636 - src.sql_agent - INFO - LLM Model Name: qwen3.5:397b-cloud
+2026-03-17 00:13:28,116 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): us.i.posthog.com:443
+2026-03-17 00:13:29,227 - urllib3.connectionpool - DEBUG - https://us.i.posthog.com:443 "POST /batch/ HTTP/1.1" 200 15
+2026-03-17 00:21:42,170 - root - INFO - Logging configured: level=DEBUG, handlers=['console', 'file']
+2026-03-17 00:21:42,175 - src.sql_agent - INFO - Using LLM: <class 'langchain_community.chat_models.openai.ChatOpenAI'>
+2026-03-17 00:21:42,176 - src.sql_agent - INFO - LLM Model Name: qwen3.5:397b-cloud
+2026-03-17 00:21:42,643 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): us.i.posthog.com:443
+2026-03-17 00:21:43,824 - urllib3.connectionpool - DEBUG - https://us.i.posthog.com:443 "POST /batch/ HTTP/1.1" 200 15
+2026-03-17 00:21:44,762 - src.database_manager - INFO - Database connection established successfully
+2026-03-17 00:21:44,765 - src.utils - INFO - Created/verified sql_rag.user_profiles table
+2026-03-17 00:21:44,765 - src.utils - INFO - Created/verified sql_rag.chat_sessions table
+2026-03-17 00:21:44,766 - src.utils - INFO - Created/verified sql_rag.conversation_history table
+2026-03-17 00:21:44,766 - src.database_manager - INFO - Loading configured tables from sql_rag.sql_rag_configurations...
+2026-03-17 00:21:44,768 - src.database_manager - INFO - Found 11 tables to index: ['orders', 'products', 'order_items', 'jdl_cp_contacts', 'jdl_cp_identity', 'jdl_customer_principal', 'jdl_customer_principal_addr', 'jlkp_type', 'jlkp_value', 'krc_account', 'sre_transaction']
+2026-03-17 00:21:45,328 - src.sql_agent - INFO - Clearing Vector Store for configured schema load...
+2026-03-17 00:21:45,673 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:21:46,122 - urllib3.connectionpool - DEBUG - https://us.i.posthog.com:443 "POST /batch/ HTTP/1.1" 200 15
+2026-03-17 00:21:48,691 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:21:48,693 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:21:50,783 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:21:50,785 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:21:52,904 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:21:52,906 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:21:55,070 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:21:55,072 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:21:57,217 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:21:57,218 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:21:59,781 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:21:59,783 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:22:02,180 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:22:02,182 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:22:04,315 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:22:04,316 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:22:06,458 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:22:06,460 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:22:08,826 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:22:08,827 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:22:11,741 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:22:12,001 - src.vector_store - INFO - Stored 11 DDLs in Vector Store (ChromaDB + Nomic).
+2026-03-17 00:22:12,001 - src.sql_agent - INFO - Successfully loaded configured schema into Vector Store.
+2026-03-17 00:22:12,124 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:22:14,230 - urllib3.connectionpool - DEBUG - http://localhost:11434 "GET /api/tags HTTP/1.1" 200 1402
+2026-03-17 00:22:43,936 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:22:44,063 - src.ollama_llm - INFO - Initializing Ollama with model='qwen3.5:397b-cloud', base_url='http://localhost:11434'
+2026-03-17 00:22:44,551 - src.vector_store - INFO - Vector Store initialized with collection: sql_ddl_embeddings
+2026-03-17 00:22:44,552 - root - INFO - Logging configured: level=DEBUG, handlers=['console', 'file']
+2026-03-17 00:22:44,579 - src.sql_agent - INFO - PostgresTextMemory will be initialized for user: 2
+2026-03-17 00:22:44,581 - src.sql_agent - INFO - Using LLM: <class 'langchain_community.chat_models.openai.ChatOpenAI'>
+2026-03-17 00:22:44,584 - src.sql_agent - INFO - LLM Model Name: qwen3.5:397b-cloud
+2026-03-17 00:22:45,241 - urllib3.connectionpool - DEBUG - https://us.i.posthog.com:443 "POST /batch/ HTTP/1.1" 200 15
+2026-03-17 00:22:45,969 - urllib3.connectionpool - DEBUG - http://localhost:11434 "GET /api/tags HTTP/1.1" 200 1402
+2026-03-17 00:22:46,545 - src.database_manager - INFO - Database connection established successfully
+2026-03-17 00:22:46,545 - src.database_manager - INFO - Loading configured tables from sql_rag.sql_rag_configurations...
+2026-03-17 00:22:46,546 - src.database_manager - INFO - Found 11 tables to index: ['orders', 'products', 'order_items', 'jdl_cp_contacts', 'jdl_cp_identity', 'jdl_customer_principal', 'jdl_customer_principal_addr', 'jlkp_type', 'jlkp_value', 'krc_account', 'sre_transaction']
+2026-03-17 00:22:46,994 - src.sql_agent - INFO - Clearing Vector Store for configured schema load...
+2026-03-17 00:22:47,202 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:22:47,563 - urllib3.connectionpool - DEBUG - https://us.i.posthog.com:443 "POST /batch/ HTTP/1.1" 200 15
+2026-03-17 00:22:49,294 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:22:49,296 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:22:51,380 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:22:51,381 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:22:53,455 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:22:53,456 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:22:55,633 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:22:55,634 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:22:57,814 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:22:57,815 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:23:00,384 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:23:00,386 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:23:02,797 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:23:02,798 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:23:04,913 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:23:04,914 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:23:07,033 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:23:07,034 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:23:09,399 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:23:09,401 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:23:12,288 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 00:23:12,498 - src.vector_store - INFO - Stored 11 DDLs in Vector Store (ChromaDB + Nomic).
+2026-03-17 00:23:12,498 - src.sql_agent - INFO - Successfully loaded configured schema into Vector Store.
+2026-03-17 00:23:12,506 - src.logger - INFO - Logging tables and indexes verified.
+2026-03-17 00:23:12,508 - src.postgres_text_memory - INFO - PostgresTextMemory: tables initialized successfully
+2026-03-17 00:23:12,519 - src.postgres_text_memory - INFO - Session created: sess_2_58e2b0f33d72 for user 2
+2026-03-17 00:23:12,519 - src.sql_agent - INFO - PostgresTextMemory initialized for 2
+2026-03-17 00:23:12,873 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 00:23:14,936 - urllib3.connectionpool - DEBUG - http://localhost:11434 "GET /api/tags HTTP/1.1" 200 1402
+2026-03-17 01:06:11,500 - root - INFO - Logging configured: level=DEBUG, handlers=['console', 'file']
+2026-03-17 01:06:11,500 - src.sql_agent - INFO - Using LLM: <class 'langchain_community.chat_models.openai.ChatOpenAI'>
+2026-03-17 01:06:11,500 - src.sql_agent - INFO - LLM Model Name: qwen3.5:397b-cloud
+2026-03-17 01:06:11,984 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): us.i.posthog.com:443
+2026-03-17 01:06:12,627 - src.database_manager - INFO - Database connection established successfully
+2026-03-17 01:06:12,629 - src.utils - INFO - Created/verified sql_rag.user_profiles table
+2026-03-17 01:06:12,629 - src.utils - INFO - Created/verified sql_rag.chat_sessions table
+2026-03-17 01:06:12,629 - src.utils - INFO - Created/verified sql_rag.conversation_history table
+2026-03-17 01:06:12,629 - src.database_manager - INFO - Loading configured tables from sql_rag.sql_rag_configurations...
+2026-03-17 01:06:12,630 - src.database_manager - INFO - Found 11 tables to index: ['orders', 'products', 'order_items', 'jdl_cp_contacts', 'jdl_cp_identity', 'jdl_customer_principal', 'jdl_customer_principal_addr', 'jlkp_type', 'jlkp_value', 'krc_account', 'sre_transaction']
+2026-03-17 01:06:13,017 - src.sql_agent - INFO - Clearing Vector Store for configured schema load...
+2026-03-17 01:06:13,070 - urllib3.connectionpool - DEBUG - https://us.i.posthog.com:443 "POST /batch/ HTTP/1.1" 200 15
+2026-03-17 01:06:13,349 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:06:13,889 - urllib3.connectionpool - DEBUG - https://us.i.posthog.com:443 "POST /batch/ HTTP/1.1" 200 15
+2026-03-17 01:06:16,061 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:06:16,062 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:06:18,154 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:06:18,155 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:06:20,275 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:06:20,276 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:06:22,437 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:06:22,439 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:06:24,595 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:06:24,596 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:06:27,170 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:06:27,171 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:06:29,577 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:06:29,578 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:06:31,703 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:06:31,705 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:06:33,832 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:06:33,833 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:06:36,201 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:06:36,202 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:06:39,077 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:06:39,303 - src.vector_store - INFO - Stored 11 DDLs in Vector Store (ChromaDB + Nomic).
+2026-03-17 01:06:39,303 - src.sql_agent - INFO - Successfully loaded configured schema into Vector Store.
+2026-03-17 01:06:39,308 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:06:41,343 - urllib3.connectionpool - DEBUG - http://localhost:11434 "GET /api/tags HTTP/1.1" 200 1402
+2026-03-17 01:06:41,344 - src.llm_factory - DEBUG - [LLMFactory] Loaded 4 Ollama model(s).
+2026-03-17 01:06:57,466 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:06:57,561 - src.ollama_llm - INFO - Initializing Ollama with model='qwen3.5:397b-cloud', base_url='http://localhost:11434'
+2026-03-17 01:06:58,028 - src.vector_store - INFO - Vector Store initialized with collection: sql_ddl_embeddings
+2026-03-17 01:06:58,028 - root - INFO - Logging configured: level=DEBUG, handlers=['console', 'file']
+2026-03-17 01:06:58,038 - src.sql_agent - INFO - PostgresTextMemory will be initialized for user: 1
+2026-03-17 01:06:58,038 - src.sql_agent - INFO - Using LLM: <class 'langchain_community.chat_models.openai.ChatOpenAI'>
+2026-03-17 01:06:58,038 - src.sql_agent - INFO - LLM Model Name: qwen3.5:397b-cloud
+2026-03-17 01:06:58,380 - urllib3.connectionpool - DEBUG - https://us.i.posthog.com:443 "POST /batch/ HTTP/1.1" 200 15
+2026-03-17 01:06:59,518 - urllib3.connectionpool - DEBUG - http://localhost:11434 "GET /api/tags HTTP/1.1" 200 1402
+2026-03-17 01:06:59,518 - src.llm_factory - DEBUG - [LLMFactory] Loaded 4 Ollama model(s).
+2026-03-17 01:07:00,120 - src.database_manager - INFO - Database connection established successfully
+2026-03-17 01:07:00,121 - src.database_manager - INFO - Loading configured tables from sql_rag.sql_rag_configurations...
+2026-03-17 01:07:00,122 - src.database_manager - INFO - Found 11 tables to index: ['orders', 'products', 'order_items', 'jdl_cp_contacts', 'jdl_cp_identity', 'jdl_customer_principal', 'jdl_customer_principal_addr', 'jlkp_type', 'jlkp_value', 'krc_account', 'sre_transaction']
+2026-03-17 01:07:00,562 - src.sql_agent - INFO - Clearing Vector Store for configured schema load...
+2026-03-17 01:07:00,773 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:07:01,197 - urllib3.connectionpool - DEBUG - https://us.i.posthog.com:443 "POST /batch/ HTTP/1.1" 200 15
+2026-03-17 01:07:02,852 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:07:02,853 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:07:04,940 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:07:04,942 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:07:07,043 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:07:07,045 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:07:09,223 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:07:09,225 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:07:11,366 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:07:11,367 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:07:13,936 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:07:13,937 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:07:16,344 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:07:16,346 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:07:18,457 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:07:18,459 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:07:20,577 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:07:20,578 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:07:22,939 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:07:22,940 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:07:25,794 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:07:26,011 - src.vector_store - INFO - Stored 11 DDLs in Vector Store (ChromaDB + Nomic).
+2026-03-17 01:07:26,012 - src.sql_agent - INFO - Successfully loaded configured schema into Vector Store.
+2026-03-17 01:07:26,021 - src.logger - INFO - Logging tables and indexes verified.
+2026-03-17 01:07:26,030 - src.postgres_text_memory - INFO - PostgresTextMemory: tables initialized successfully
+2026-03-17 01:07:26,063 - src.postgres_text_memory - INFO - Session created: sess_1_08715016d831 for user 1
+2026-03-17 01:07:26,064 - src.sql_agent - INFO - PostgresTextMemory initialized for 1
+2026-03-17 01:07:26,397 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:07:28,431 - urllib3.connectionpool - DEBUG - http://localhost:11434 "GET /api/tags HTTP/1.1" 200 1402
+2026-03-17 01:07:28,431 - src.llm_factory - DEBUG - [LLMFactory] Loaded 4 Ollama model(s).
+2026-03-17 01:11:20,004 - root - INFO - Logging configured: level=DEBUG, handlers=['console', 'file']
+2026-03-17 01:11:20,005 - src.sql_agent - INFO - Using LLM: <class 'langchain_community.chat_models.openai.ChatOpenAI'>
+2026-03-17 01:11:20,005 - src.sql_agent - INFO - LLM Model Name: qwen3.5:397b-cloud
+2026-03-17 01:11:20,483 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): us.i.posthog.com:443
+2026-03-17 01:11:21,068 - src.database_manager - INFO - Database connection established successfully
+2026-03-17 01:11:21,069 - src.utils - INFO - Created/verified sql_rag.user_profiles table
+2026-03-17 01:11:21,069 - src.utils - INFO - Created/verified sql_rag.chat_sessions table
+2026-03-17 01:11:21,070 - src.utils - INFO - Created/verified sql_rag.conversation_history table
+2026-03-17 01:11:21,070 - src.database_manager - INFO - Loading configured tables from sql_rag.sql_rag_configurations...
+2026-03-17 01:11:21,071 - src.database_manager - INFO - Found 11 tables to index: ['orders', 'products', 'order_items', 'jdl_cp_contacts', 'jdl_cp_identity', 'jdl_customer_principal', 'jdl_customer_principal_addr', 'jlkp_type', 'jlkp_value', 'krc_account', 'sre_transaction']
+2026-03-17 01:11:21,446 - src.sql_agent - INFO - Clearing Vector Store for configured schema load...
+2026-03-17 01:11:21,739 - urllib3.connectionpool - DEBUG - https://us.i.posthog.com:443 "POST /batch/ HTTP/1.1" 200 15
+2026-03-17 01:11:21,742 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:11:22,567 - urllib3.connectionpool - DEBUG - https://us.i.posthog.com:443 "POST /batch/ HTTP/1.1" 200 15
+2026-03-17 01:11:23,848 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:11:23,849 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:11:25,970 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:11:25,972 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:11:28,090 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:11:28,091 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:11:30,269 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:11:30,270 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:11:32,441 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:11:32,442 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:11:35,014 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:11:35,015 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:11:37,396 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:11:37,397 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:11:39,531 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:11:39,533 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:11:41,681 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:11:41,683 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:11:44,045 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:11:44,046 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:11:46,932 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:11:47,204 - src.vector_store - INFO - Stored 11 DDLs in Vector Store (ChromaDB + Nomic).
+2026-03-17 01:11:47,205 - src.sql_agent - INFO - Successfully loaded configured schema into Vector Store.
+2026-03-17 01:11:47,224 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:11:49,280 - urllib3.connectionpool - DEBUG - http://localhost:11434 "GET /api/tags HTTP/1.1" 200 1402
+2026-03-17 01:11:49,282 - src.llm_factory - DEBUG - [LLMFactory] Loaded 4 Ollama model(s).
+2026-03-17 01:11:49,283 - src.llm_factory - DEBUG - [LLMFactory] Loaded enterprise model(s): gpt-4o-mini,gpt-4o,gpt-5.4
+2026-03-17 01:12:17,048 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:12:17,144 - src.ollama_llm - INFO - Initializing Ollama with model='qwen3.5:397b-cloud', base_url='http://localhost:11434'
+2026-03-17 01:12:17,618 - src.vector_store - INFO - Vector Store initialized with collection: sql_ddl_embeddings
+2026-03-17 01:12:17,619 - root - INFO - Logging configured: level=DEBUG, handlers=['console', 'file']
+2026-03-17 01:12:17,620 - src.sql_agent - INFO - PostgresTextMemory will be initialized for user: 1
+2026-03-17 01:12:17,620 - src.sql_agent - INFO - Using LLM: <class 'langchain_community.chat_models.openai.ChatOpenAI'>
+2026-03-17 01:12:17,620 - src.sql_agent - INFO - LLM Model Name: qwen3.5:397b-cloud
+2026-03-17 01:12:17,961 - urllib3.connectionpool - DEBUG - https://us.i.posthog.com:443 "POST /batch/ HTTP/1.1" 200 15
+2026-03-17 01:12:19,101 - urllib3.connectionpool - DEBUG - http://localhost:11434 "GET /api/tags HTTP/1.1" 200 1402
+2026-03-17 01:12:19,102 - src.llm_factory - DEBUG - [LLMFactory] Loaded 4 Ollama model(s).
+2026-03-17 01:12:19,102 - src.llm_factory - DEBUG - [LLMFactory] Loaded enterprise model(s): gpt-4o-mini,gpt-4o,gpt-5.4
+2026-03-17 01:12:19,659 - src.database_manager - INFO - Database connection established successfully
+2026-03-17 01:12:19,659 - src.database_manager - INFO - Loading configured tables from sql_rag.sql_rag_configurations...
+2026-03-17 01:12:19,660 - src.database_manager - INFO - Found 11 tables to index: ['orders', 'products', 'order_items', 'jdl_cp_contacts', 'jdl_cp_identity', 'jdl_customer_principal', 'jdl_customer_principal_addr', 'jlkp_type', 'jlkp_value', 'krc_account', 'sre_transaction']
+2026-03-17 01:12:20,055 - src.sql_agent - INFO - Clearing Vector Store for configured schema load...
+2026-03-17 01:12:20,269 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:12:20,931 - urllib3.connectionpool - DEBUG - https://us.i.posthog.com:443 "POST /batch/ HTTP/1.1" 200 15
+2026-03-17 01:12:22,374 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:12:22,376 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:12:24,482 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:12:24,484 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:12:26,599 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:12:26,600 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:12:28,776 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:12:28,777 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:12:30,940 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:12:30,941 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:12:33,506 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:12:33,508 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:12:35,913 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:12:35,914 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:12:38,047 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:12:38,049 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:12:40,184 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:12:40,186 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:12:42,562 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:12:42,563 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:12:45,442 - urllib3.connectionpool - DEBUG - http://localhost:11434 "POST /api/embeddings HTTP/1.1" 200 None
+2026-03-17 01:12:45,740 - src.vector_store - INFO - Stored 11 DDLs in Vector Store (ChromaDB + Nomic).
+2026-03-17 01:12:45,742 - src.sql_agent - INFO - Successfully loaded configured schema into Vector Store.
+2026-03-17 01:12:45,746 - src.logger - INFO - Logging tables and indexes verified.
+2026-03-17 01:12:45,751 - src.postgres_text_memory - INFO - PostgresTextMemory: tables initialized successfully
+2026-03-17 01:12:45,756 - src.postgres_text_memory - INFO - Session created: sess_1_6f63d73b9c9f for user 1
+2026-03-17 01:12:45,756 - src.sql_agent - INFO - PostgresTextMemory initialized for 1
+2026-03-17 01:12:46,049 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:11434
+2026-03-17 01:12:48,097 - urllib3.connectionpool - DEBUG - http://localhost:11434 "GET /api/tags HTTP/1.1" 200 1402
+2026-03-17 01:12:48,098 - src.llm_factory - DEBUG - [LLMFactory] Loaded 4 Ollama model(s).
+2026-03-17 01:12:48,099 - src.llm_factory - DEBUG - [LLMFactory] Loaded enterprise model(s): gpt-4o-mini,gpt-4o,gpt-5.4
