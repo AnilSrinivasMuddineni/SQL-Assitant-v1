@@ -2,10 +2,10 @@ import json
 import requests
 from typing import Dict, Any, List, Optional
 import logging
-# Use ChatOpenAI from langchain_community as langchain-openai is not installed
-from langchain_community.chat_models import ChatOpenAI
+from crewai import LLM
 
 logger = logging.getLogger(__name__)
+
 
 class OllamaManager:
     def __init__(self, config_path: str):
@@ -22,14 +22,12 @@ class OllamaManager:
         
         logger.info(f"Initializing Ollama with model='{self.model}', base_url='{self.base_url}'")
         
-        # Use ChatOpenAI client pointing to Ollama
-        # This is often more stable for CrewAI than the native Ollama integration
-        # NOTE: We use openai_api_base instead of base_url for compatibility with older langchain_community
-        self.llm = ChatOpenAI(
-            model=self.model,
-            openai_api_base=f"{self.base_url}/v1",
-            openai_api_key="NA", # Ollama doesn't require a key, but the client expects one
-            temperature=0.7
+        # Use crewai.LLM — the native LLM class for CrewAI 1.x.
+        # It uses litellm under the hood and has the call() method that CrewAI agents require.
+        self.llm = LLM(
+            model=f"ollama/{self.model}",
+            base_url=self.base_url,
+            temperature=0.7,
         )
 
     def _load_config(self) -> Dict[str, Any]:
@@ -57,11 +55,10 @@ class OllamaManager:
         
         logger.info(f"Updating Ollama to model='{self.model}', base_url='{self.base_url}'")
         
-        self.llm = ChatOpenAI(
-            model=self.model,
-            openai_api_base=f"{self.base_url}/v1",
-            openai_api_key="NA",
-            temperature=0.7
+        self.llm = LLM(
+            model=f"ollama/{self.model}",
+            base_url=self.base_url,
+            temperature=0.7,
         )
 
     def get_available_models(self) -> List[str]:

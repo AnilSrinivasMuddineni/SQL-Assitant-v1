@@ -668,7 +668,7 @@ class SQLAgent:
             Answer ONLY with the word YES or NO. Do not add punctuation or explanation.
             """
             
-            response = self.llm.invoke(prompt)
+            response = self.llm.call(prompt)
             
             # Clean response
             clean_response = str(response).strip().upper()
@@ -727,7 +727,7 @@ class SQLAgent:
                     last_sql=last_sql[:200] if last_sql else "None"  # Truncate for context
                 )
                 
-                response = self.llm.invoke(prompt).strip().upper()
+                response = self.llm.call(prompt).strip().upper()
                 logger.info(f"LLM classification response: {response}")
                 
                 return 'MODIFICATION' if 'MODIFICATION' in response else 'NEW_QUERY'

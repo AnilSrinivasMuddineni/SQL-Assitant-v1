@@ -125,9 +125,11 @@ def _create_ollama_llm(model: str, config_path: str, ollama_manager) -> Any:
 
 def _create_enterprise_llm(model: str) -> Any:
     """
-    Build a ChatOpenAI-compatible enterprise LLM from env vars.
+    Build an enterprise LLM using crewai.LLM (litellm backend).
     Never logs or exposes the API key.
     """
+    from crewai import LLM as CrewLLM
+
     enterprise_provider = os.getenv("ENTERPRISE_LLM_PROVIDER", "openai").lower().strip()
     api_key = os.getenv("ENTERPRISE_LLM_API_KEY", "")
     endpoint = os.getenv("ENTERPRISE_LLM_ENDPOINT", "").rstrip("/")
@@ -143,41 +145,24 @@ def _create_enterprise_llm(model: str) -> Any:
         f"model={model}, endpoint={'(default)' if not endpoint else endpoint}"
     )
 
-    if enterprise_provider in ("openai", "azure_openai"):
-        from langchain_community.chat_models import ChatOpenAI
+    # litellm model string conventions:
+    #   OpenAI  → "openai/<model>"  or just "<model>"
+    #   Azure   → "azure/<deployment>"
+    #   Anthropic → "anthropic/<model>"
+    #   Generic  → "openai/<model>" with custom api_base
+    if enterprise_provider == "azure_openai":
+        litellm_model = f"azure/{model}"
+    elif enterprise_provider == "anthropic":
+        litellm_model = f"anthropic/{model}"
+    else:
+        litellm_model = model  # OpenAI or generic
 
-        kwargs: Dict[str, Any] = {
-            "model": model,
-            "openai_api_key": api_key,
-            "temperature": 0.1,
-        }
-        if endpoint:
-            kwargs["openai_api_base"] = endpoint
-
-        return ChatOpenAI(**kwargs)
-
-    if enterprise_provider == "anthropic":
-        try:
-            from langchain_community.chat_models import ChatAnthropic  # type: ignore
-
-            kwargs = {"model": model, "anthropic_api_key": api_key, "temperature": 0.1}
-            if endpoint:
-                kwargs["anthropic_api_url"] = endpoint
-            return ChatAnthropic(**kwargs)
-        except ImportError:
-            logger.warning(
-                "[LLMFactory] langchain-anthropic not installed; "
-                "falling back to ChatOpenAI-compatible endpoint."
-            )
-
-    # Generic OpenAI-compatible fallback
-    from langchain_community.chat_models import ChatOpenAI
-
-    kwargs = {
-        "model": model,
-        "openai_api_key": api_key,
+    kwargs: Dict[str, Any] = {
+        "model": litellm_model,
+        "api_key": api_key,
         "temperature": 0.1,
     }
     if endpoint:
-        kwargs["openai_api_base"] = endpoint
-    return ChatOpenAI(**kwargs)
+        kwargs["base_url"] = endpoint
+
+    return CrewLLM(**kwargs)
