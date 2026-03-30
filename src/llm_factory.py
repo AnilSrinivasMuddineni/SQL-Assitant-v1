@@ -61,6 +61,19 @@ def get_combined_model_list(ollama_manager) -> List[Dict[str, str]]:
                 })
         logger.debug(f"[LLMFactory] Loaded enterprise model(s): {enterprise_models_raw}")
 
+    # --- 3. Custom HTTP model from env ---
+    custom_api_base = os.getenv("CUSTOM_LLM_API_BASE", "").strip()
+    custom_api_key = os.getenv("CUSTOM_LLM_API_KEY", "").strip()
+    
+    if custom_api_base and custom_api_key:
+        custom_model = os.getenv("CUSTOM_LLM_MODEL_DEFAULT", "chat-model").strip()
+        combined.append({
+            "provider": "custom_http",
+            "model": custom_model,
+            "label": f"Custom API \u2013 {custom_model}",
+        })
+        logger.debug(f"[LLMFactory] Loaded Custom HTTP model: {custom_model}")
+
     return combined
 
 
@@ -96,6 +109,9 @@ def create_llm(
 
     if provider == "enterprise":
         return _create_enterprise_llm(model)
+
+    if provider == "custom_http":
+        return _create_custom_http_llm(model)
 
     # Unknown provider — fall back to Ollama and warn
     logger.warning(
@@ -166,3 +182,35 @@ def _create_enterprise_llm(model: str) -> Any:
         kwargs["base_url"] = endpoint
 
     return CrewLLM(**kwargs)
+
+
+def _create_custom_http_llm(model: str) -> Any:
+    """
+    Build a Custom HTTP LLM wrapper using environment variables.
+    """
+    from src.custom_http_llm import CustomHTTPChatLLM
+
+    api_base = os.getenv("CUSTOM_LLM_API_BASE", "").strip()
+    api_key = os.getenv("CUSTOM_LLM_API_KEY", "").strip()
+
+    if not api_base or not api_key:
+        raise ValueError(
+            "[LLMFactory] CUSTOM_LLM_API_BASE and CUSTOM_LLM_API_KEY are required "
+            "to create Custom HTTP LLM."
+        )
+
+    # Use the default model if none dynamically selected yet
+    final_model = model or os.getenv("CUSTOM_LLM_MODEL_DEFAULT", "chat-model").strip()
+
+    logger.info(
+        f"[LLMFactory] Custom HTTP LLM: model={final_model}, "
+        f"api_base={api_base}"
+    )
+
+    return CustomHTTPChatLLM(
+        api_base=api_base,
+        api_key=api_key,
+        model_name=final_model,
+        temperature=0.0
+    )
+

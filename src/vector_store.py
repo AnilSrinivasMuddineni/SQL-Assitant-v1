@@ -5,6 +5,12 @@ import os
 import requests
 import time
 
+try:
+    from sentence_transformers import CrossEncoder
+    HAS_CROSS_ENCODER = True
+except ImportError:
+    HAS_CROSS_ENCODER = False
+
 logger = logging.getLogger(__name__)
 
 class VectorStore:
@@ -22,6 +28,15 @@ class VectorStore:
                 name=collection_name,
                 metadata={"hnsw:space": "cosine"} # Use cosine similarity
             )
+            
+            if HAS_CROSS_ENCODER:
+                logger.info("Initializing CrossEncoder reranker...")
+                # MiniLM offers a great balance of speed and ranking quality
+                self.reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2', max_length=512)
+            else:
+                logger.warning("sentence_transformers not installed; reranking disabled.")
+                self.reranker = None
+                
             logger.info(f"Vector Store initialized with collection: {collection_name}")
         except Exception as e:
             logger.error(f"Failed to initialize Vector Store: {str(e)}")
@@ -89,7 +104,7 @@ class VectorStore:
 
     def semantic_search_ddl(self, prompt: str, top_k: int = 5) -> Tuple[List[str], List[str], Dict[str, float], int]:
         """
-        Performance-Optimized Retrieval using ChromaDB.
+        Retrieval using ChromaDB with optional Cross-Encoder Reranking and Relevance Filtering.
         Returns: 
            ddl_content_list, top_tables_list, relevance_scores_dict, query_time_ms
         """
@@ -97,37 +112,76 @@ class VectorStore:
         try:
             query_embedding = self._generate_embeddings([prompt])
             
+            # Fetch more documents if we have a reranker
+            fetch_k = top_k * 3 if self.reranker else top_k
+            
             results = self.collection.query(
                 query_embeddings=query_embedding,
-                n_results=top_k,
+                n_results=fetch_k,
                 include=['documents', 'metadatas', 'distances']
             )
             
             query_time_ms = int((time.time() - t0) * 1000)
             
+            if not results['documents'] or not results['documents'][0]:
+                return [], [], {}, query_time_ms
+                
+            candidates: List[Dict[str, Any]] = []
+            
+            for i in range(len(results['documents'][0])):
+                doc = results['documents'][0][i]
+                meta = results['metadatas'][0][i]
+                dist = results['distances'][0][i] if 'distances' in results and results['distances'] else 0.0
+                sim = max(0.0, 1.0 - dist)
+                
+                table_name = meta['table_name']
+                ddl_content = meta.get('ddl_content', doc)
+                candidates.append({
+                    'table_name': table_name,
+                    'ddl_content': ddl_content,
+                    'dense_score': sim,
+                    # Fallback text to rank against
+                    'rank_text': f"{table_name}: {ddl_content}" 
+                })
+                
+            if self.reranker:
+                # Prepare pairs for cross encoder: (query, document)
+                pairs = [[prompt, c['rank_text']] for c in candidates]
+                rerank_scores = self.reranker.predict(pairs)
+                
+                for idx, c in enumerate(candidates):
+                    c['rerank_score'] = float(rerank_scores[idx])
+                
+                # RELEVANCE FILTERING: drop fundamentally irrelevant tables.
+                # MS-MARCO MiniLM produces logits roughly between -10 and 10.
+                # A score < -5.0 usually indicates zero semantic connection.
+                relevance_threshold = -5.0
+                filtered_candidates = [c for c in candidates if c['rerank_score'] >= relevance_threshold]
+                
+                # If everything was filtered out, fallback to dense top 1 (better than answering blindly)
+                if not filtered_candidates and candidates:
+                    logger.warning(f"All {len(candidates)} candidates filtered out by reranker. Keeping top 1 dense.")
+                    candidates.sort(key=lambda x: x['dense_score'], reverse=True)
+                    filtered_candidates = [candidates[0]]
+                
+                # Sort by rerank score descending
+                filtered_candidates.sort(key=lambda x: x['rerank_score'], reverse=True)
+                
+                # Keep top K
+                final_candidates = filtered_candidates[:top_k]
+            else:
+                # Dense only
+                final_candidates = candidates[:top_k]
+                
             ddls = []
             tables = []
             scores = {}
-            
-            if results['documents'] and len(results['documents']) > 0:
-                for i in range(len(results['documents'][0])):
-                    doc = results['documents'][0][i]
-                    meta = results['metadatas'][0][i]
-                    # We might not get distances if not returned, so handle gracefully
-                    dist = results['distances'][0][i] if 'distances' in results and results['distances'] else 0.0
-                    
-                    # Cosine distance to similarity score
-                    sim = max(0.0, 1.0 - dist)
-                    
-                    # Original doc is in result['documents'] or metadata['ddl_content']
-                    table_name = meta['table_name']
-                    # We stored original DDL in metadata to avoid the Prefix we added
-                    ddl_content = meta.get('ddl_content', doc)
-                    
-                    tables.append(table_name)
-                    ddls.append(ddl_content)
-                    scores[table_name] = round(sim, 2)
-                    
+            for c in final_candidates:
+                tables.append(c['table_name'])
+                ddls.append(c['ddl_content'])
+                # Report either the rerank score or dense score as similarity
+                scores[c['table_name']] = round(c.get('rerank_score', c['dense_score']), 2)
+
             return ddls, tables, scores, query_time_ms
             
         except Exception as e:
