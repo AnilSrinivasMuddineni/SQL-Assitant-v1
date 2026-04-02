@@ -9,12 +9,12 @@ These providers are instantiated centrally and mapped into `Crew` agents (via `S
 
 ## 2. Proposed Design: Custom HTTP Provider
 We are adding a **third provider type** (`custom_http`), specifically to call a newly introduced inference API endpoint:
-`https://inference.xxxx.in/ModelGateway/v1/chat/completions`
+`https://xxxx.in/completions`
 
 ### Environment Variables (.env)
 These values will be specified exclusively via environment settings to ensure no secrets are stored in code and to maintain flexible configuration across deployments:
 - `CUSTOM_LLM_ENABLED`: Toggle to selectively enable the new provider (default: `false`).
-- `CUSTOM_LLM_API_BASE`: Endpoint base URL (default: `https://inference.xxxx.in/ModelGateway/v1`).
+- `CUSTOM_LLM_API_BASE`: Endpoint base URL (default: `https://xxxx.in/completions`).
 - `CUSTOM_LLM_API_KEY`: The API key (passed within the `Authorization: Bearer <API_KEY>` header).
 - `CUSTOM_LLM_MODEL_DEFAULT`: The model name to pass within the JSON body (e.g., `chat-model`).
 
